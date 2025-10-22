@@ -10,7 +10,7 @@ on:
     # - cron: '30 21 * * 1-5'
     
     # Test run at 1:22 AM IST (19:52 UTC)
-    - cron: '55 20 * * *'
+    - cron: '15 21 * * *'
   
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Fetch latest intraday data
-        run: python data_fetcher.py
+        run: python fetch_intraday.py
 
       - name: Train and update ML models
         run: python model_trainer.py
