@@ -1,0 +1,25 @@
+name: Daily Stock Model Retrain
+
+on:
+  schedule:
+    - cron: "30 16 * * 1-5"   # 9:30 PM IST (approx close time)
+  workflow_dispatch:          # Allow manual trigger too
+
+permissions:
+  contents: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch latest hourly data and retrain model
+        run: python fetch_intraday.py
