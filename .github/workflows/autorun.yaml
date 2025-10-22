@@ -2,7 +2,7 @@ name: Daily Stock Model Retrain
 
 on:
   schedule:
-    - cron: "30 16 * * 1-5"   # 9:30 PM IST (approx close time)
+    - cron: "10 15 * * 1-5"   # 9:30 PM IST (approx close time)
   workflow_dispatch:          # Allow manual trigger too
 
 permissions:
