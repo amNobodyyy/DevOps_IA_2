@@ -6,7 +6,7 @@ import time
 API_KEY = "AWBE6N6H7MIU812S"
 
 # Top 10 Tech Stocks 
-symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "TSM", "ADBE"]
+symbols = ["AAPL", "MSFT", "NVDA"]
 
 def fetch_intraday(symbol, interval="60min"):
     """Fetch all intraday (hourly) data for a symbol."""
@@ -37,7 +37,7 @@ def fetch_all_symbols(symbols):
         df = fetch_intraday(symbol)
         if df is not None:
             all_data.append(df)
-        time.sleep(20)  # 5 requests per minute (free tier)
+        time.sleep(5)  # 5 requests per minute (free tier)
     return all_data
 
 def filter_latest_day_data(df):
