@@ -28,9 +28,6 @@ jobs:
         run: |
             git config --global user.email "bot@example.com"
             git config --global user.name "GitHub Actions Bot"
-            
-            git checkout daily-updates || git checkout -b daily-updates
-
             git add *.csv
             git commit -m "🤖 Daily fetch data"
             git push origin main
