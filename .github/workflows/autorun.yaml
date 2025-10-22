@@ -1,9 +1,10 @@
 name: Daily Stock Model Retrain
 
 on:
-  schedule:
-    - cron: "30 15 * * 1-5"   # UTC + 5:30 -> IST on weekdays
   workflow_dispatch:          # Allow manual trigger too
+  schedule:
+    - cron: '40 15 * * *'   # UTC + 5:30 -> IST on weekdays
+  
 
 permissions:
   contents: write
