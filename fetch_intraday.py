@@ -74,7 +74,7 @@ if all_data:
     full_df = filter_latest_day_data(full_df)
 
     full_df.to_csv("tech_stocks_intraday_today.csv", index=False)
-    print("\n✅ Saved hourly intraday data for today → tech_stocks_intraday_today.csv")
+    print("\n Saved hourly intraday data for today → tech_stocks_intraday_today.csv")
     print(full_df.head())
 else:
-    print("❌ No data fetched.")
+    print("No data fetched.")
