@@ -10,7 +10,7 @@ on:
     # - cron: '30 21 * * 1-5'
     
     # Test run at 1:22 AM IST (19:52 UTC)
-    - cron: '52 19 * * *'
+    - cron: '55 20 * * *'
   
 
 permissions:
