@@ -25,16 +25,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Fetch latest hourly data and retrain model
-        run: python fetch_intraday.py
+      - name: Fetch latest intraday data
+        run: python data_fetcher.py
 
-      - name: Commit and push changes to daily-updates branch
+      - name: Train and update ML models
+        run: python model_trainer.py
+
+      - name: Commit and push changes to main branch
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
             git config --global user.email "bot@example.com"
             git config --global user.name "GitHub Actions Bot"
-            git add *.csv
-            git commit -m "🤖 Daily fetch data"
+            git add data/*.csv models/*.pkl
+            git commit -m "Daily data fetch and model update - $(date +'%Y-%m-%d')" || echo "No changes to commit"
             git push origin main
         

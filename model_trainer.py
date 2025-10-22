@@ -5,11 +5,20 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from pathlib import Path
+import time
 
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import joblib
+from math import sqrt
+
+from tensorflow.keras.layers import Dense, Activation, Dropout, Bidirectional, LSTM
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+
+# Suppress TensorFlow warnings
+tf.get_logger().setLevel('ERROR')
 
 DATA_DIR = "data"
 MODELS_DIR = "models"
@@ -39,12 +48,51 @@ def get_stock_today_file(symbol):
 
 def get_model_path(symbol):
     """Get the path to model file for a stock."""
-    return os.path.join(MODELS_DIR, f"{symbol}_model.pkl")
+    return os.path.join(MODELS_DIR, f"{symbol}_model.h5")
 
 
 def get_scaler_path(symbol):
     """Get the path to scaler file for a stock."""
     return os.path.join(MODELS_DIR, f"{symbol}_scaler.pkl")
+
+
+def get_metrics_path(symbol):
+    """Get the path to metrics file for a stock."""
+    return os.path.join(MODELS_DIR, f"{symbol}_metrics.json")
+
+
+def load_metrics_history(symbol):
+    """Load historical metrics for a stock."""
+    metrics_path = get_metrics_path(symbol)
+    if os.path.exists(metrics_path):
+        with open(metrics_path, 'r') as f:
+            return json.load(f)
+    return {"symbol": symbol, "history": []}
+
+
+def save_metrics(symbol, metrics_data):
+    """Save metrics incrementally to JSON file."""
+    metrics_path = get_metrics_path(symbol)
+    
+    # Load existing metrics
+    metrics_history = load_metrics_history(symbol)
+    
+    # Add timestamp if not present
+    if "timestamp" not in metrics_data:
+        metrics_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Add date for easy filtering
+    if "date" not in metrics_data:
+        metrics_data["date"] = datetime.now().strftime("%Y-%m-%d")
+    
+    # Append new metrics to history
+    metrics_history["history"].append(metrics_data)
+    
+    # Save updated metrics
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics_history, f, indent=2)
+    
+    print(f"  Metrics saved: {metrics_path}")
 
 
 def load_stock_data(symbol, include_today=False):
@@ -78,109 +126,257 @@ def load_stock_data(symbol, include_today=False):
     return df
 
 
+def add_technical_indicators(df):
+    """Add technical indicators to the dataframe."""
+    try:
+        # Simple Moving Averages
+        df['SMA_5'] = df['close'].rolling(window=5).mean()
+        df['SMA_10'] = df['close'].rolling(window=10).mean()
+        df['SMA_20'] = df['close'].rolling(window=20).mean()
+        
+        # Price momentum
+        df['Price_Change'] = df['close'].pct_change()
+        df['Price_Change_2'] = df['close'].pct_change(2)
+        
+        # Volatility
+        df['Volatility'] = df['close'].rolling(window=10).std()
+        
+        # High-Low ratio
+        df['HL_Ratio'] = df['high'] / df['low']
+        
+        # Volume indicators
+        if 'volume' in df.columns:
+            df['Volume_MA'] = df['volume'].rolling(window=5).mean()
+            df['Volume_Ratio'] = df['volume'] / (df['Volume_MA'] + 1e-10)
+        
+        # Mid price
+        df['Mid_Price'] = (df['high'] + df['low']) / 2.0
+        
+        # Forward fill and backward fill NaN values
+        df = df.ffill()
+        df = df.bfill()
+        df.fillna(0, inplace=True)
+        
+        return df
+    except Exception as e:
+        print(f"  Error adding technical indicators: {e}")
+        return df
+
+
 def create_features(df, lookback=5):
     """
-    Create features for the model.
-    Lookback window: uses last 'lookback' days to predict next close.
+    Create features for the model - REMOVED, now using technical indicators.
     """
-    df = df.copy()
-    df = df.sort_values("timestamp").reset_index(drop=True)
-
-    # Feature engineering
-    df["close_lag1"] = df["close"].shift(1)
-    df["close_lag2"] = df["close"].shift(2)
-    df["volume_lag1"] = df["volume"].shift(1)
-    df["high_low_ratio"] = df["high"] / df["low"]
-    df["close_open_ratio"] = df["close"] / df["open"]
-
-    # Rolling features
-    df["close_sma5"] = df["close"].rolling(window=5, min_periods=1).mean()
-    df["volume_sma5"] = df["volume"].rolling(window=5, min_periods=1).mean()
-
-    # Drop rows with NaN values created by lag/rolling
-    df = df.dropna().reset_index(drop=True)
-
+    # Just add technical indicators and return
+    df = add_technical_indicators(df)
     return df
 
 
-def prepare_training_data(df):
-    """Prepare X (features) and y (target) for training."""
-    feature_cols = [
-        "open", "high", "low", "close_lag1", "close_lag2",
-        "volume", "volume_lag1", "high_low_ratio", "close_open_ratio",
-        "close_sma5", "volume_sma5"
-    ]
+def prepare_sequences(df, window=10):
+    """Prepare sequences for LSTM training."""
+    # Drop non-numeric columns
+    columns_to_drop = []
+    if 'timestamp' in df.columns:
+        columns_to_drop.append('timestamp')
+    if 'symbol' in df.columns:
+        columns_to_drop.append('symbol')
+    
+    if columns_to_drop:
+        df = df.drop(columns_to_drop, axis=1)
+    
+    # Ensure target column is last
+    target_col = "Mid_Price"
+    if target_col in df.columns:
+        cols = df.columns.tolist()
+        cols.remove(target_col)
+        cols.append(target_col)
+        df = df[cols]
+    
+    # Scale the data
+    scaler = MinMaxScaler()
+    df_scaled = scaler.fit_transform(df.values)
+    
+    # Prepare sequences
+    sequences = []
+    for i in range(len(df_scaled) - window):
+        sequences.append(df_scaled[i:i + window + 1])
+    
+    if len(sequences) == 0:
+        return None, None, None, None, None
+    
+    sequences = np.array(sequences)
+    
+    # Split data (80/20)
+    split_ratio = 0.8
+    train_size = int(len(sequences) * split_ratio)
+    
+    train_sequences = sequences[:train_size]
+    test_sequences = sequences[train_size:]
+    
+    if len(train_sequences) == 0 or len(test_sequences) == 0:
+        return None, None, None, None, None
+    
+    # Prepare training data
+    X_train = train_sequences[:, :-1]
+    y_train = train_sequences[:, -1][:, -1]  # Last feature is target
+    X_test = test_sequences[:, :-1]
+    y_test = test_sequences[:, -1][:, -1]
+    
+    return X_train, y_train, X_test, y_test, scaler
 
-    X = df[feature_cols].values
-    y = df["close"].values
 
-    return X, y, feature_cols
+def build_lstm_model(input_shape, learning_rate=0.001, bidirectional=False):
+    """Build an LSTM model for stock price prediction."""
+    model = Sequential()
+    
+    if bidirectional:
+        model.add(Bidirectional(LSTM(64, return_sequences=True), input_shape=input_shape))
+    else:
+        model.add(LSTM(64, return_sequences=True, input_shape=input_shape))
+    
+    model.add(Dropout(0.3))
+    
+    if bidirectional:
+        model.add(Bidirectional(LSTM(128, return_sequences=False)))
+    else:
+        model.add(LSTM(128, return_sequences=False))
+    
+    model.add(Dropout(0.3))
+    model.add(Dense(1))
+    
+    optimizer = Adam(learning_rate=learning_rate)
+    model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
+    
+    return model
 
 
 def train_stock_model(symbol, retrain=False):
     """
-    Train a new model for a stock or retrain existing one.
-    retrain=True: Use existing model as checkpoint, fine-tune with new data
+    Train a new LSTM model for a stock or update existing one.
+    retrain=True: Load existing model and continue training
     retrain=False: Train new model from scratch
     """
-    print(f"\nTraining model for {symbol}...")
+    print(f"\nTraining LSTM model for {symbol}...")
 
     # Load data
     df = load_stock_data(symbol, include_today=True)
-    if df is None or len(df) < 20:
-        print(f"ERROR: Insufficient data for {symbol} (need at least 20 records)")
+    if df is None or len(df) < 50:
+        print(f"ERROR: Insufficient data for {symbol} (need at least 50 records)")
         return False
 
-    # Create features
-    df = create_features(df, lookback=5)
-    print(f"  Created features ({len(df)} samples)")
+    # Add technical indicators
+    df = create_features(df)
+    print(f"  Added technical indicators ({len(df)} samples)")
 
-    # Prepare training data
-    X, y, feature_cols = prepare_training_data(df)
+    # Prepare sequences for LSTM
+    window = 10
+    X_train, y_train, X_test, y_test, scaler = prepare_sequences(df, window=window)
+    
+    if X_train is None:
+        print(f"ERROR: Could not create sequences for {symbol}")
+        return False
+    
+    print(f"  Train samples: {len(X_train)}, Test samples: {len(X_test)}")
 
-    # Normalize features
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # Load or create model
+    # Model configuration
     model_path = get_model_path(symbol)
     scaler_path = get_scaler_path(symbol)
+    
+    config = {
+        'lstm_units_1': 64,
+        'lstm_units_2': 128,
+        'dropout_rate': 0.3,
+        'learning_rate': 0.001,
+        'bidirectional': False
+    }
 
+    # Load or create model
     if retrain and os.path.exists(model_path):
-        print(f"  Loading existing model for fine-tuning...")
-        model = joblib.load(model_path)
-        scaler = joblib.load(scaler_path)
-        # Re-scale with new data
-        X_scaled = scaler.fit_transform(X)
+        print(f"  Loading existing model for continued training...")
+        model = load_model(model_path, compile=False)
+        model.compile(optimizer=Adam(learning_rate=config['learning_rate']), loss='mse', metrics=['mae'])
+        # Load existing scaler
+        with open(scaler_path, 'rb') as f:
+            scaler = pickle.load(f)
     else:
-        print(f"  Creating new model...")
-        model = RandomForestRegressor(
-            n_estimators=100,
-            max_depth=10,
-            min_samples_split=5,
-            min_samples_leaf=2,
-            random_state=42,
-            n_jobs=-1
+        print(f"  Creating new LSTM model...")
+        amount_of_features = X_train.shape[2]
+        model = build_lstm_model(
+            (window, amount_of_features), 
+            learning_rate=config['learning_rate'],
+            bidirectional=config['bidirectional']
         )
 
-    # Train/update model
-    model.fit(X_scaled, y)
+    # Enhanced training with callbacks
+    callbacks = [
+        EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True, verbose=0),
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=0.0001, verbose=0)
+    ]
+
+    # Train model
+    print("  Training LSTM model...")
+    history = model.fit(
+        X_train, y_train,
+        batch_size=32,
+        epochs=50,
+        validation_split=0.15,
+        callbacks=callbacks,
+        verbose=0
+    )
+
+    # Evaluate model
+    train_loss = model.evaluate(X_train, y_train, verbose=0)
+    test_loss = model.evaluate(X_test, y_test, verbose=0)
+    
+    # Make predictions for R² calculation
+    y_train_pred = model.predict(X_train, verbose=0)
+    y_test_pred = model.predict(X_test, verbose=0)
+    
+    # Calculate additional metrics
+    train_mae = mean_absolute_error(y_train, y_train_pred)
+    test_mae = mean_absolute_error(y_test, y_test_pred)
+    train_r2 = r2_score(y_train, y_train_pred)
+    test_r2 = r2_score(y_test, y_test_pred)
+    
     print(f"  Model training completed")
-
-    # Evaluate on training data
-    y_pred = model.predict(X_scaled)
-    mse = mean_squared_error(y, y_pred)
-    mae = mean_absolute_error(y, y_pred)
-    r2 = r2_score(y, y_pred)
-
     print(f"  Training Metrics:")
-    print(f"    MSE: {mse:.4f}")
-    print(f"    MAE: {mae:.4f}")
-    print(f"    R2: {r2:.4f}")
+    print(f"    Train Loss (MSE): {train_loss[0]:.6f}")
+    print(f"    Test Loss (MSE): {test_loss[0]:.6f}")
+    print(f"    Test RMSE: {sqrt(test_loss[0]):.6f}")
+    print(f"    Test R²: {test_r2:.6f}")
+
+    # Prepare metrics data
+    metrics_data = {
+        "operation": "retrain" if retrain else "train",
+        "samples": {
+            "train": len(X_train),
+            "test": len(X_test),
+            "total": len(df)
+        },
+        "training": {
+            "train_loss_mse": float(train_loss[0]),
+            "train_mae": float(train_mae),
+            "train_r2": float(train_r2),
+            "test_loss_mse": float(test_loss[0]),
+            "test_mae": float(test_mae),
+            "test_rmse": float(sqrt(test_loss[0])),
+            "test_r2": float(test_r2)
+        },
+        "model_config": config,
+        "window_size": window,
+        "epochs_run": len(history.history['loss']),
+        "final_train_loss": float(history.history['loss'][-1]),
+        "final_val_loss": float(history.history['val_loss'][-1])
+    }
+    
+    # Save metrics incrementally
+    save_metrics(symbol, metrics_data)
 
     # Save model and scaler
-    joblib.dump(model, model_path)
-    joblib.dump(scaler, scaler_path)
+    model.save(model_path)
+    with open(scaler_path, 'wb') as f:
+        pickle.dump(scaler, f)
+    
     print(f"  Model saved: {model_path}")
     print(f"  Scaler saved: {scaler_path}")
 
@@ -204,8 +400,8 @@ def update_stock_model(symbol):
 
 
 def predict_next_close(symbol):
-    """Predict the next close price for a stock."""
-    print(f"\nPredicting next close for {symbol}...")
+    """Predict the next price for a stock using LSTM model."""
+    print(f"\nPredicting next price for {symbol}...")
 
     model_path = get_model_path(symbol)
     scaler_path = get_scaler_path(symbol)
@@ -214,38 +410,87 @@ def predict_next_close(symbol):
         print(f"ERROR: Model not found for {symbol}")
         return None
 
-    # Load model and scaler
-    model = joblib.load(model_path)
-    scaler = joblib.load(scaler_path)
+    # Load model and scaler (compile=False to avoid deserialization issues)
+    model = load_model(model_path, compile=False)
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
+    
+    with open(scaler_path, 'rb') as f:
+        scaler = pickle.load(f)
 
     # Load latest data
     df = load_stock_data(symbol, include_today=True)
-    if df is None or len(df) < 20:
+    if df is None or len(df) < 50:
         print(f"ERROR: Insufficient data for prediction")
         return None
 
-    # Create features
-    df = create_features(df, lookback=5)
-
-    # Get last row as features
-    feature_cols = [
-        "open", "high", "low", "close_lag1", "close_lag2",
-        "volume", "volume_lag1", "high_low_ratio", "close_open_ratio",
-        "close_sma5", "volume_sma5"
-    ]
+    # Add technical indicators
+    df = create_features(df)
     
-    last_row = df[feature_cols].values[-1].reshape(1, -1)
-    last_row_scaled = scaler.transform(last_row)
-
+    # Prepare data for prediction - drop non-numeric columns
+    columns_to_drop = []
+    if 'timestamp' in df.columns:
+        columns_to_drop.append('timestamp')
+    if 'symbol' in df.columns:
+        columns_to_drop.append('symbol')
+    
+    if columns_to_drop:
+        df = df.drop(columns_to_drop, axis=1)
+    
+    # Ensure target column is last
+    target_col = "Mid_Price"
+    if target_col in df.columns:
+        cols = df.columns.tolist()
+        cols.remove(target_col)
+        cols.append(target_col)
+        df = df[cols]
+    
+    # Scale the data
+    df_scaled = scaler.transform(df.values)
+    
+    # Get last window for prediction
+    window = 10
+    if len(df_scaled) < window:
+        print(f"ERROR: Not enough data for window size {window}")
+        return None
+    
+    latest_data = df_scaled[-window:]
+    x_latest = np.reshape(latest_data, (1, window, df_scaled.shape[1]))
+    
     # Predict
-    predicted_close = model.predict(last_row_scaled)[0]
-    last_actual_close = df["close"].values[-1]
+    p_latest_scaled = model.predict(x_latest, verbose=0)
+    
+    # Inverse transform prediction
+    amount_of_features = df_scaled.shape[1]
+    dummy_latest = np.zeros((1, amount_of_features))
+    dummy_latest[:, -1] = p_latest_scaled.flatten()
+    predicted_price = scaler.inverse_transform(dummy_latest)[0, -1]
+    
+    # Get last actual price
+    last_actual_close = df["close"].values[-1] if "close" in df.columns else df[target_col].values[-1]
 
     print(f"  Last actual close: ${last_actual_close:.2f}")
-    print(f"  Predicted next close: ${predicted_close:.2f}")
-    print(f"  Change: ${predicted_close - last_actual_close:.2f}")
+    print(f"  Predicted next price: ${predicted_price:.2f}")
+    print(f"  Change: ${predicted_price - last_actual_close:.2f}")
 
-    return predicted_close
+    # Calculate prediction metrics
+    price_change = predicted_price - last_actual_close
+    price_change_pct = (price_change / last_actual_close) * 100
+    
+    # Prepare prediction metrics
+    prediction_metrics = {
+        "operation": "prediction",
+        "last_actual_close": float(last_actual_close),
+        "predicted_next_price": float(predicted_price),
+        "price_change": float(price_change),
+        "price_change_percent": float(price_change_pct),
+        "data_points_used": len(df),
+        "window_size": window
+    }
+    
+    # Save prediction metrics
+    save_metrics(symbol, prediction_metrics)
+
+    return predicted_price
 
 
 def main():
