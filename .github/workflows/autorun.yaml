@@ -31,5 +31,5 @@ jobs:
             git add *.csv
             git commit -m "🤖 Daily fetch data"
             git push origin main
-            env:
+        env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
