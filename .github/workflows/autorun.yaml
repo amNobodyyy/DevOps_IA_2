@@ -3,7 +3,11 @@ name: Daily Stock Model Retrain
 on:
   workflow_dispatch:          # Allow manual trigger too
   schedule:
-    - cron: '45 15 * * *'   # UTC + 5:30 -> IST on weekdays
+    # Run at 21:30 UTC (9:30 PM UTC) on weekdays (Mon-Fri)
+    # US Market closes at 4:00 PM EST (21:00 UTC) / 4:00 PM EDT (20:00 UTC)
+    # This runs 1.5-2.5 hours after market close to ensure data availability
+    # Converts to: 2:30 AM IST (UTC+5:30) or 5:30 PM EST / 4:30 PM EDT
+    - cron: '30 21 * * 1-5'
   
 
 permissions:
