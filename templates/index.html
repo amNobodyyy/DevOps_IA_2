@@ -70,21 +70,37 @@
         .btn-predict {
             background: var(--accent);
             border: 1px solid var(--accent);
-            padding: 10px 28px;
-            font-weight: 600;
-            border-radius: 8px;
-            transition: background 0.2s ease, transform 0.1s ease;
-            margin-top: 24px;
             color: #fff;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 16px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            border-radius: 9999px; /* pill */
+            transition: background 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+            margin-top: 12px;
+            box-shadow: 0 4px 14px rgba(13, 148, 136, 0.25);
         }
         .btn-predict:hover {
             transform: translateY(-1px);
             background: var(--accent-600);
             color: #fff;
+            box-shadow: 0 6px 18px rgba(13, 148, 136, 0.32);
         }
         .btn-predict:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+        }
+        .btn-predict svg {
+            width: 16px;
+            height: 16px;
+            flex: 0 0 auto;
+            stroke: currentColor;
+            stroke-width: 2;
+        }
+        @media (max-width: 767.98px) {
+            #predictBtn { width: 100%; justify-content: center; }
         }
         .graphs-container {
             display: grid;
@@ -212,8 +228,8 @@
 
     <!-- Control Panel -->
     <div class="control-panel">
-        <div class="row">
-            <div class="col-md-6">
+        <div class="row g-3 align-items-end">
+            <div class="col-12 col-md-8">
                 <label for="stock" class="form-label">Select Stock</label>
                 <select class="form-select" id="stock">
                     <option value="" selected disabled>Choose a stock...</option>
@@ -221,9 +237,12 @@
                     <option value="MSFT">MSFT - Microsoft Corp.</option>
                 </select>
             </div>
-            <div class="col-md-6 d-flex align-items-end">
-                <button type="button" class="btn btn-predict w-100" id="predictBtn" disabled>
-                    Predict
+            <div class="col-12 col-md-4 text-md-end">
+                <button type="button" class="btn btn-predict" id="predictBtn" disabled aria-label="Run prediction">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <path d="M5 12h14M13 5l7 7-7 7" stroke="#ffffff"/></path>
+                    </svg>
+                    <span>Predict</span>
                 </button>
             </div>
         </div>
