@@ -1,0 +1,28 @@
+# Ignore everything that's not needed for the runtime image
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+.env*/
+*.log
+
+# Large local artifacts not needed in container
+*.ipynb
+*.csv
+!data/*.csv
+
+# Cache and build dirs
+node_modules
+.build
+.dist
+pip-wheel-metadata
+__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db
