@@ -1,44 +1,72 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Intraday Plot</title>
+    <title>Stock Intraday Plot & Prediction</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 </head>
-<body class="bg-light">
-<div class="container py-5">
-    <div class="card shadow">
-        <div class="card-body">
-            <h1 class="card-title mb-4">Stock Intraday Plot</h1>
 
-            <!-- Stock selection form -->
-            <form method="post">
-                <div class="mb-3">
-                    <label for="stock" class="form-label">Select Stock</label>
-                    <select class="form-select" id="stock" name="stock" required>
-                        <option value="" disabled selected>Choose a stock</option>
-                        {% for stock in stocks %}
-                            <option value="{{ stock }}" {% if selected_stock == stock %}selected{% endif %}>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="card shadow">
+            <div class="card-body">
+                <h1 class="card-title mb-4">Stock Intraday Plot</h1>
+
+                <!-- Stock selection form -->
+                <form method="post">
+                    <div class="mb-3">
+                        <label for="stock" class="form-label">Select Stock</label>
+                        <select class="form-select" id="stock" name="stock" required>
+                            <option value="" disabled selected>Choose a stock</option>
+                            {% for stock in stocks %}
+                            <option value="{{ stock }}" {% if selected_stock==stock %}selected{% endif %}>
                                 {{ stock }}
                             </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <button type="submit" class="btn btn-primary">Show Graph</button>
-            </form>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Show Graph & Predict</button>
+                </form>
 
-            <!-- Plotly graph -->
-            {% if graphJSON %}
+                <!-- Prediction Display - Show BEFORE graph for better visibility -->
+                {% if prediction %}
+                <div class="alert {% if prediction is string and '⚠️' in prediction %}alert-warning{% else %}alert-success{% endif %} mt-4"
+                    role="alert">
+                    <h5 class="alert-heading">Prediction Result</h5>
+                    {% if last_close %}
+                    <p class="mb-1"><strong>Current Close Price:</strong> ${{ "%.2f"|format(last_close) }}</p>
+                    {% endif %}
+                    <p class="mb-0"><strong>Predicted Next Price:</strong>
+                        {% if prediction is number %}
+                        ${{ "%.2f"|format(prediction) }}
+                        {% if last_close %}
+                        <span
+                            class="badge {% if prediction > last_close %}bg-success{% else %}bg-danger{% endif %} ms-2">
+                            {{ "%.2f"|format(prediction - last_close) }}
+                            ({{ "%.2f"|format(((prediction - last_close) / last_close) * 100) }}%)
+                        </span>
+                        {% endif %}
+                        {% else %}
+                        {{ prediction }}
+                        {% endif %}
+                    </p>
+                </div>
+                {% endif %}
+
+                <!-- Plotly graph -->
+                {% if graphJSON %}
                 <div id="plot" class="mt-4" style="width:100%; height:500px;"></div>
                 <script type="text/javascript">
                     var graphs = JSON.parse({{ graphJSON | tojson }});
-                    Plotly.newPlot('plot', graphs.data, graphs.layout, {responsive: true});
+                    Plotly.newPlot('plot', graphs.data, graphs.layout, { responsive: true });
                 </script>
-            {% endif %}
+                {% endif %}
+            </div>
         </div>
     </div>
-</div>
 </body>
+
 </html>
