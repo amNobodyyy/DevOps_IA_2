@@ -1,190 +1,257 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-import pickle
-from tensorflow.keras.models import load_model
-import os
-import re
 import json
-from datetime import datetime
-from model_trainer import load_stock_data, create_features, get_model_path, get_scaler_path
+import os
+from datetime import datetime, timedelta
+import numpy as np
+from model_trainer import load_metrics_history, get_model_path, get_scaler_path, add_technical_indicators, load_stock_data
+from tensorflow.keras.models import load_model
+from sklearn.preprocessing import MinMaxScaler
+import pickle
 
 app = Flask(__name__)
 
-# ======== CONFIG ========
-DATA_DIR = "data/"
-MODEL_DIR = "models/"
-WINDOW_SIZE = 10  # must match model_trainer.py
+# Get available stocks from symbols.json
+def get_available_stocks():
+    """Load stock symbols from JSON file."""
+    with open("symbols.json", "r") as f:
+        config = json.load(f)
+    return config.get("stocks", [])
 
-# ======== Helper: Get latest CSV for each stock ========
-def get_latest_stock_files():
-    files = [f for f in os.listdir(DATA_DIR) if re.match(r"^[A-Z]+_\d{4}-\d{2}-\d{2}\.csv$", f)]
-    stock_map = {}
+def get_last_day_data(symbol):
+    """Get yesterday's data for the stock."""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_file = os.path.join("data", f"{symbol}_{today_str}.csv")
+    
+    if os.path.exists(today_file):
+        df = pd.read_csv(today_file)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        return df.sort_values("timestamp").reset_index(drop=True)
+    
+    return None
 
-    for f in files:
-        match = re.match(r"^([A-Z]+)_(\d{4}-\d{2}-\d{2})\.csv$", f)
-        if match:
-            symbol, date_str = match.groups()
-            date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            if symbol not in stock_map or date > stock_map[symbol]["date"]:
-                stock_map[symbol] = {"file": f, "date": date}
-    return stock_map
+def get_metrics_for_stock(symbol):
+    """Get latest metrics for a stock."""
+    metrics = load_metrics_history(symbol)
+    if not metrics.get("history"):
+        return None
+    
+    # Get latest training and prediction metrics
+    latest_train = None
+    latest_pred = None
+    
+    for entry in reversed(metrics["history"]):
+        if entry["operation"] in ["train", "retrain"] and latest_train is None:
+            latest_train = entry
+        if entry["operation"] == "prediction" and latest_pred is None:
+            latest_pred = entry
+    
+    return {
+        "training": latest_train,
+        "prediction": latest_pred
+    }
 
-# Discover available stock files dynamically
-STOCK_FILES = get_latest_stock_files()
-STOCKS = list(STOCK_FILES.keys())
+def predict_next_hour(symbol):
+    """Predict next hour's prices at 5-min intervals."""
+    try:
+        model_path = get_model_path(symbol)
+        scaler_path = get_scaler_path(symbol)
+        
+        if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+            return None, "Model or scaler not found"
+        
+        # Load model and scaler
+        model = load_model(model_path, compile=False)
+        with open(scaler_path, 'rb') as f:
+            scaler = pickle.load(f)
+        
+        # Load data
+        df = load_stock_data(symbol, include_today=True)
+        if df is None or len(df) < 50:
+            return None, "Insufficient data"
+        
+        # Add features
+        df = add_technical_indicators(df)
+        
+        # Drop non-numeric columns
+        columns_to_drop = [col for col in ['timestamp', 'symbol'] if col in df.columns]
+        if columns_to_drop:
+            df = df.drop(columns_to_drop, axis=1)
+        
+        # Ensure target is last
+        target_col = "Mid_Price"
+        if target_col in df.columns:
+            cols = df.columns.tolist()
+            cols.remove(target_col)
+            cols.append(target_col)
+            df = df[cols]
+        
+        # Scale data
+        df_scaled = scaler.transform(df.values)
+        
+        # Generate predictions for next 12 5-min intervals (1 hour)
+        window = 10
+        predictions = []
+        current_data = df_scaled[-window:].copy()
+        
+        base_time = datetime.now() + timedelta(minutes=5)
+        
+        for i in range(12):
+            # Reshape for prediction
+            x_pred = np.reshape(current_data, (1, window, df_scaled.shape[1]))
+            
+            # Predict
+            pred_scaled = model.predict(x_pred, verbose=0)[0][0]
+            
+            # Inverse transform
+            dummy = np.zeros((1, df_scaled.shape[1]))
+            dummy[:, -1] = pred_scaled
+            pred_price = scaler.inverse_transform(dummy)[0, -1]
+            
+            pred_time = base_time + timedelta(minutes=i*5)
+            predictions.append({
+                "time": pred_time.strftime("%H:%M"),
+                "price": float(pred_price)
+            })
+            
+            # Update current data for next prediction
+            new_row = current_data[-1].copy()
+            new_row[-1] = pred_scaled
+            current_data = np.vstack([current_data[1:], new_row])
+        
+        return predictions, None
+    
+    except Exception as e:
+        return None, str(e)
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def home():
-    selected_stock = None
-    graphJSON = None
-    prediction = None
-    last_close = None
+    stocks = get_available_stocks()
+    return render_template("index.html", stocks=stocks)
 
-    if request.method == "POST":
-        selected_stock = request.form.get("stock")
+@app.route("/api/analyze", methods=["POST"])
+def analyze():
+    """API endpoint for stock analysis."""
+    try:
+        data = request.get_json()
+        symbol = data.get("symbol")
         
-        # Load stock data including today's intraday
-        stock_data_original = load_stock_data(selected_stock, include_today=True)
+        if not symbol:
+            return jsonify({"error": "Symbol required"}), 400
         
-        if stock_data_original is None or len(stock_data_original) < WINDOW_SIZE:
-            prediction = "⚠️ Not enough data for prediction"
-        else:
-            # Find the latest intraday CSV file for this stock
-            stock_files = [f for f in os.listdir(DATA_DIR) if f.startswith(f"{selected_stock}_") and f.endswith(".csv")]
+        # Get last day's data
+        last_day = get_last_day_data(symbol)
+        if last_day is None:
+            return jsonify({"error": "No data found for symbol"}), 404
+        
+        # Create last day graph
+        fig_last = go.Figure()
+        fig_last.add_trace(go.Scatter(
+            x=last_day["timestamp"].dt.strftime("%H:%M").tolist(),
+            y=last_day["close"].tolist(),
+            mode='lines+markers',
+            name='Close Price',
+            line=dict(color='blue', width=2),
+            marker=dict(size=6)
+        ))
+        
+        fig_last.update_layout(
+            title=f"{symbol} - Last Trading Day",
+            xaxis_title="Time",
+            yaxis_title="Price (USD)",
+            hovermode='x unified',
+            template='plotly_white',
+            height=400
+        )
+        
+        graph_last_day = fig_last.to_json()
+        
+        # Get predictions for next hour
+        predictions, pred_error = predict_next_hour(symbol)
+        
+        graph_next_hour = None
+        prediction_data = None
+        
+        if predictions:
+            times = [p["time"] for p in predictions]
+            prices = [p["price"] for p in predictions]
             
-            if stock_files:
-                # Extract dates and find the latest
-                dates = []
-                for f in stock_files:
-                    match = re.match(rf"^{selected_stock}_(\d{{4}}-\d{{2}}-\d{{2}})\.csv$", f)
-                    if match:
-                        date_str = match.group(1)
-                        dates.append((date_str, f))
-                
-                if dates:
-                    # Sort by date and get the latest
-                    dates.sort(reverse=True)
-                    latest_date_str, latest_file = dates[0]
-                    latest_date = datetime.strptime(latest_date_str, "%Y-%m-%d").date()
-                    
-                    # Load latest intraday file
-                    latest_intraday = pd.read_csv(os.path.join(DATA_DIR, latest_file))
-                    latest_intraday["timestamp"] = pd.to_datetime(latest_intraday["timestamp"])
-                    
-                    # Store latest intraday data for plotting
-                    plot_timestamps = latest_intraday["timestamp"].tolist()
-                    plot_closes = latest_intraday["close"].tolist()
-                    plot_date = latest_date_str
-                else:
-                    plot_timestamps = []
-                    plot_closes = []
-                    plot_date = None
-            else:
-                plot_timestamps = []
-                plot_closes = []
-                plot_date = None
+            fig_next = go.Figure()
+            fig_next.add_trace(go.Scatter(
+                x=times,
+                y=prices,
+                mode='lines+markers',
+                name='Predicted Price',
+                line=dict(color='green', width=2),
+                marker=dict(size=6)
+            ))
             
-            # Use ALL data (historical + today) for prediction
-            last_close = stock_data_original["close"].iloc[-1]
+            # Add current price as reference
+            last_price = last_day["close"].iloc[-1]
+            fig_next.add_hline(y=last_price, line_dash="dash", line_color="red", 
+                             annotation_text="Current Price", annotation_position="right")
             
-            # Create a copy for model processing
-            stock_data = stock_data_original.copy()
+            fig_next.update_layout(
+                title=f"{symbol} - Next Hour Prediction (5-min intervals)",
+                xaxis_title="Time",
+                yaxis_title="Predicted Price (USD)",
+                hovermode='x unified',
+                template='plotly_white',
+                height=400
+            )
             
-            # Add technical indicators
-            stock_data = create_features(stock_data)
-
-            # Drop non-numeric columns
-            columns_to_drop = []
-            if 'timestamp' in stock_data.columns:
-                columns_to_drop.append('timestamp')
-            if 'symbol' in stock_data.columns:
-                columns_to_drop.append('symbol')
+            graph_next_hour = fig_next.to_json()
+            prediction_data = {
+                "predictions": predictions,
+                "current_price": float(last_price),
+                "predicted_open": float(predictions[0]["price"]),
+                "change": float(predictions[0]["price"] - last_price)
+            }
+        
+        # Get metrics
+        metrics = get_metrics_for_stock(symbol)
+        
+        metrics_display = None
+        if metrics:
+            if metrics["training"]:
+                train = metrics["training"]
+                # training metrics are nested under 'training' key in history entries
+                trn = train.get("training", {}) if isinstance(train, dict) else {}
+                metrics_display = {
+                    "training": {
+                        "r2_score": f"{trn.get('test_r2', 0):.4f}",
+                        "rmse": f"{trn.get('test_rmse', 0):.6f}",
+                        "mae": f"{trn.get('test_mae', 0):.6f}",
+                        "train_r2": f"{trn.get('train_r2', 0):.4f}",
+                        "timestamp": train.get("timestamp", "N/A")
+                    }
+                }
             
-            if columns_to_drop:
-                stock_data = stock_data.drop(columns=columns_to_drop)
-
-            # Ensure target column is last
-            target_col = "Mid_Price"
-            if target_col in stock_data.columns:
-                cols = stock_data.columns.tolist()
-                cols.remove(target_col)
-                cols.append(target_col)
-                stock_data = stock_data[cols]
-
-            # Load model and scaler
-            model_path = get_model_path(selected_stock)
-            scaler_path = get_scaler_path(selected_stock)
-
-            if os.path.exists(model_path) and os.path.exists(scaler_path):
-                try:
-                    # Load model without compilation (prediction only, no training)
-                    model = load_model(model_path, compile=False)
-                    
-                    # Load scaler
-                    with open(scaler_path, 'rb') as f:
-                        scaler = pickle.load(f)
-
-                    # Scale all features
-                    df_scaled = scaler.transform(stock_data.values)
-
-                    # Take last WINDOW_SIZE rows for prediction
-                    x_latest = df_scaled[-WINDOW_SIZE:]
-                    x_latest = x_latest.reshape(1, WINDOW_SIZE, df_scaled.shape[1])
-
-                    # Predict
-                    y_pred_scaled = model.predict(x_latest, verbose=0)
-
-                    # Inverse transform
-                    dummy = np.zeros((1, df_scaled.shape[1]))
-                    dummy[0, -1] = y_pred_scaled.flatten()[0]
-                    predicted_price = scaler.inverse_transform(dummy)[0, -1]
-
-                    prediction = round(predicted_price, 2)
-                except Exception as e:
-                    prediction = f"⚠️ Error during prediction: {str(e)}"
-            else:
-                prediction = f"⚠️ Model or scaler not found for {selected_stock}"
-
-            # Create figure using latest intraday data only
-            if len(plot_timestamps) > 0:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=plot_timestamps,
-                    y=plot_closes,
-                    mode='lines+markers',
-                    name=selected_stock,
-                    line=dict(color='#2E86DE', width=2),
-                    marker=dict(size=4)
-                ))
-                
-                # Update layout
-                fig.update_layout(
-                    title=f"{selected_stock} Intraday Close Price ({plot_date})",
-                    xaxis_title="Time",
-                    yaxis_title="Price (USD)",
-                    hovermode='x unified',
-                    template='plotly_white',
-                    height=500
-                )
-
-                # Convert to JSON
-                graphJSON = fig.to_json()
-            else:
-                graphJSON = None
-                if prediction != "⚠️ Not enough data for prediction":
-                    prediction = "⚠️ No intraday CSV file found"
-
-    return render_template(
-        "index.html",
-        stocks=STOCKS,
-        selected_stock=selected_stock,
-        graphJSON=graphJSON,
-        prediction=prediction,
-        last_close=last_close
-    )
+            if metrics["prediction"]:
+                pred = metrics["prediction"]
+                if metrics_display is None:
+                    metrics_display = {}
+                metrics_display["prediction"] = {
+                    "last_close": f"${pred.get('last_actual_close', 0):.2f}",
+                    "predicted_price": f"${pred.get('predicted_next_price', 0):.2f}",
+                    "change": f"${pred.get('price_change', 0):.2f}",
+                    "change_pct": f"{pred.get('price_change_percent', 0):.2f}%",
+                    "timestamp": pred.get("timestamp", "N/A")
+                }
+        
+        return jsonify({
+            "success": True,
+            "symbol": symbol,
+            "graph_last_day": graph_last_day,
+            "graph_next_hour": graph_next_hour,
+            "predictions": prediction_data,
+            "metrics": metrics_display,
+            "error": pred_error
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Use Render's PORT or default to 5000
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=4879, debug=True)

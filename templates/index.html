@@ -1,72 +1,438 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Intraday Plot & Prediction</title>
+    <title>Stock Prediction Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        :root {
+            --bg: #f6f7fb;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e5e7eb;
+            --accent: #0d9488; /* teal */
+            --accent-600: #0b766c;
+            --shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+        }
+        body {
+            background: var(--bg);
+            min-height: 100vh;
+            padding: 24px 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--text);
+        }
+        .dashboard-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .dashboard-header {
+            margin-bottom: 28px;
+            text-align: center;
+        }
+        .dashboard-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+            letter-spacing: -0.02em;
+        }
+        .dashboard-header p {
+            font-size: 0.95rem;
+            color: var(--muted);
+            margin: 0;
+        }
+        .control-panel {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            margin-bottom: 20px;
+        }
+        .control-panel .form-label {
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        .control-panel .form-select {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 1rem;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .control-panel .form-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
+        }
+        .btn-predict {
+            background: var(--accent);
+            border: 1px solid var(--accent);
+            padding: 10px 28px;
+            font-weight: 600;
+            border-radius: 8px;
+            transition: background 0.2s ease, transform 0.1s ease;
+            margin-top: 24px;
+            color: #fff;
+        }
+        .btn-predict:hover {
+            transform: translateY(-1px);
+            background: var(--accent-600);
+            color: #fff;
+        }
+        .btn-predict:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .graphs-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 768px) {
+            .graphs-container {
+                grid-template-columns: 1fr;
+            }
+        }
+        .graph-card {
+            background: var(--card);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .graph-title {
+            color: var(--text);
+            padding: 14px 16px;
+            font-weight: 600;
+            margin: 0;
+            border-bottom: 1px solid var(--border);
+            background: #fff;
+        }
+        .graph-content {
+            padding: 16px;
+            min-height: 380px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .metric-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: var(--shadow);
+            text-align: center;
+            border: 1px solid var(--border);
+        }
+        .metric-label {
+            color: var(--muted);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .metric-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .metric-value.positive { color: #16a34a; }
+        .metric-value.negative { color: #dc2626; }
+        .spinner-container {
+            display: none;
+            text-align: center;
+            padding: 24px;
+            color: var(--text);
+        }
+        .spinner-container.show { display: block; }
+        .spinner-border {
+            color: var(--accent);
+            width: 44px;
+            height: 44px;
+            border-width: 4px;
+        }
+        .error-alert {
+            display: none;
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px;
+            color: #dc2626;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .error-alert.show { display: block; }
+        .prediction-table {
+            margin-top: 12px;
+            background: var(--card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .prediction-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .prediction-table thead th {
+            background: #f1f5f9;
+            color: var(--text);
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        .prediction-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .prediction-table tr:hover {
+            background: #f8fafc;
+        }
+    </style>
 </head>
+<body>
+<div class="dashboard-container">
+    <!-- Header -->
+    <div class="dashboard-header">
+        <h1>Stock prediction dashboard</h1>
+        <p>Intraday forecast and model metrics</p>
+    </div>
 
-<body class="bg-light">
-    <div class="container py-5">
-        <div class="card shadow">
-            <div class="card-body">
-                <h1 class="card-title mb-4">Stock Intraday Plot</h1>
+    <!-- Error Alert -->
+    <div id="errorAlert" class="error-alert">
+        <strong>Error:</strong> <span id="errorMessage"></span>
+    </div>
 
-                <!-- Stock selection form -->
-                <form method="post">
-                    <div class="mb-3">
-                        <label for="stock" class="form-label">Select Stock</label>
-                        <select class="form-select" id="stock" name="stock" required>
-                            <option value="" disabled selected>Choose a stock</option>
-                            {% for stock in stocks %}
-                            <option value="{{ stock }}" {% if selected_stock==stock %}selected{% endif %}>
-                                {{ stock }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Show Graph & Predict</button>
-                </form>
-
-                <!-- Prediction Display - Show BEFORE graph for better visibility -->
-                {% if prediction %}
-                <div class="alert {% if prediction is string and '⚠️' in prediction %}alert-warning{% else %}alert-success{% endif %} mt-4"
-                    role="alert">
-                    <h5 class="alert-heading">Prediction Result</h5>
-                    {% if last_close %}
-                    <p class="mb-1"><strong>Current Close Price:</strong> ${{ "%.2f"|format(last_close) }}</p>
-                    {% endif %}
-                    <p class="mb-0"><strong>Predicted Next Price:</strong>
-                        {% if prediction is number %}
-                        ${{ "%.2f"|format(prediction) }}
-                        {% if last_close %}
-                        <span
-                            class="badge {% if prediction > last_close %}bg-success{% else %}bg-danger{% endif %} ms-2">
-                            {{ "%.2f"|format(prediction - last_close) }}
-                            ({{ "%.2f"|format(((prediction - last_close) / last_close) * 100) }}%)
-                        </span>
-                        {% endif %}
-                        {% else %}
-                        {{ prediction }}
-                        {% endif %}
-                    </p>
-                </div>
-                {% endif %}
-
-                <!-- Plotly graph -->
-                {% if graphJSON %}
-                <div id="plot" class="mt-4" style="width:100%; height:500px;"></div>
-                <script type="text/javascript">
-                    var graphs = JSON.parse({{ graphJSON | tojson }});
-                    Plotly.newPlot('plot', graphs.data, graphs.layout, { responsive: true });
-                </script>
-                {% endif %}
+    <!-- Control Panel -->
+    <div class="control-panel">
+        <div class="row">
+            <div class="col-md-6">
+                <label for="stock" class="form-label">Select Stock</label>
+                <select class="form-select" id="stock">
+                    <option value="" selected disabled>Choose a stock...</option>
+                    <option value="AAPL">AAPL - Apple Inc.</option>
+                    <option value="MSFT">MSFT - Microsoft Corp.</option>
+                </select>
+            </div>
+            <div class="col-md-6 d-flex align-items-end">
+                <button type="button" class="btn btn-predict w-100" id="predictBtn" disabled>
+                    Predict
+                </button>
             </div>
         </div>
     </div>
-</body>
 
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="spinner-container">
+        <div class="spinner-border" role="status"></div>
+        <p style="margin-top: 20px; font-size: 1.1rem;">Analyzing stock data and generating predictions...</p>
+    </div>
+
+    <!-- Results Container (hidden by default) -->
+    <div id="resultsContainer" style="display: none;">
+        <!-- Metrics Grid -->
+        <div class="metrics-grid" id="metricsGrid">
+        </div>
+
+        <!-- Graphs Grid -->
+        <div class="graphs-container">
+            <div class="graph-card">
+                <div class="graph-title">Last trading day</div>
+                <div class="graph-content">
+                    <div id="graphLastDay" style="width: 100%; height: 350px;"></div>
+                </div>
+            </div>
+            <div class="graph-card">
+                <div class="graph-title">Next hour predictions</div>
+                <div class="graph-content">
+                    <div id="graphNextHour" style="width: 100%; height: 350px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Predictions Table -->
+        <div class="graph-card">
+            <div class="graph-title">Detailed predictions</div>
+            <div class="graph-content">
+                <div class="prediction-table" id="predictionsTable">
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const predictBtn = document.getElementById('predictBtn');
+    const stockSelect = document.getElementById('stock');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const resultsContainer = document.getElementById('resultsContainer');
+    const errorAlert = document.getElementById('errorAlert');
+    const errorMessage = document.getElementById('errorMessage');
+
+    // Enable/disable predict button based on stock selection
+    stockSelect.addEventListener('change', function() {
+        predictBtn.disabled = !this.value;
+    });
+
+    // Predict button click handler
+    predictBtn.addEventListener('click', async function() {
+        const stock = stockSelect.value;
+        if (!stock) return;
+
+        // Show loading, hide results and errors
+        loadingSpinner.classList.add('show');
+        resultsContainer.style.display = 'none';
+        errorAlert.classList.remove('show');
+
+        try {
+            const response = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ symbol: stock })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // Display graphs (API returns Plotly JSON as string; parse if needed)
+            const lastObj = typeof data.graph_last_day === 'string' ? JSON.parse(data.graph_last_day) : data.graph_last_day;
+            if (lastObj && lastObj.data && lastObj.layout) {
+                Plotly.newPlot('graphLastDay', lastObj.data, lastObj.layout, { responsive: true });
+            }
+
+            const nextObj = data.graph_next_hour ? (typeof data.graph_next_hour === 'string' ? JSON.parse(data.graph_next_hour) : data.graph_next_hour) : null;
+            if (nextObj && nextObj.data && nextObj.layout) {
+                Plotly.newPlot('graphNextHour', nextObj.data, nextObj.layout, { responsive: true });
+            } else {
+                // Clear graph if no predictions
+                Plotly.purge('graphNextHour');
+            }
+
+            // Display metrics (backend provides nested training/prediction sections)
+            displayMetrics(data.metrics);
+
+            // Display predictions table (extract inner array if wrapped)
+            const predsArray = data && data.predictions
+                ? (Array.isArray(data.predictions) ? data.predictions
+                   : (Array.isArray(data.predictions.predictions) ? data.predictions.predictions : []))
+                : [];
+            displayPredictionsTable(predsArray);
+
+            // Show results
+            resultsContainer.style.display = 'block';
+
+        } catch (error) {
+            console.error('Error:', error);
+            errorMessage.textContent = error.message || 'Failed to fetch predictions';
+            errorAlert.classList.add('show');
+        } finally {
+            loadingSpinner.classList.remove('show');
+        }
+    });
+
+    function displayMetrics(metrics) {
+        const metricsGrid = document.getElementById('metricsGrid');
+        metricsGrid.innerHTML = '';
+
+        if (!metrics) return;
+
+        // Training metrics
+        if (metrics.training) {
+            const r2 = parseFloat(metrics.training.r2_score || '0');
+            const rmse = parseFloat(metrics.training.rmse || '0');
+            const mae = parseFloat(metrics.training.mae || '0');
+            const trainR2 = parseFloat(metrics.training.train_r2 || '0');
+
+            const metricsData = [
+                { label: 'Model R²', value: r2 },
+                { label: 'RMSE', value: rmse },
+                { label: 'MAE', value: mae },
+                { label: 'Training R²', value: trainR2 }
+            ];
+
+            metricsData.forEach(metric => {
+                const card = document.createElement('div');
+                card.className = 'metric-card';
+                const formattedValue = isFinite(metric.value) ? metric.value.toFixed(metric.label.includes('R²') ? 4 : 6) : '-';
+                card.innerHTML = `
+                    <div class="metric-label">${metric.label}</div>
+                    <div class="metric-value">${formattedValue}</div>
+                `;
+                metricsGrid.appendChild(card);
+            });
+        }
+
+        // Prediction summary
+        if (metrics.prediction) {
+            const parseMoney = (s) => typeof s === 'string' ? parseFloat(s.replace(/[$,]/g, '')) : (typeof s === 'number' ? s : NaN);
+            const lastClose = parseMoney(metrics.prediction.last_close);
+            const predicted = parseMoney(metrics.prediction.predicted_price);
+
+            if (isFinite(lastClose) && isFinite(predicted)) {
+                const priceChange = predicted - lastClose;
+                const pctChange = (priceChange / lastClose) * 100;
+                const summaryCard = document.createElement('div');
+                summaryCard.className = 'metric-card';
+                const changeClass = priceChange >= 0 ? 'positive' : 'negative';
+                summaryCard.innerHTML = `
+                    <div class="metric-label">Predicted price change</div>
+                    <div class="metric-value ${changeClass}">
+                        ${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}
+                        <div style="font-size: 0.8rem; margin-top: 5px;">(${priceChange >= 0 ? '+' : ''}${pctChange.toFixed(2)}%)</div>
+                    </div>
+                `;
+                metricsGrid.appendChild(summaryCard);
+            }
+        }
+    }
+
+    function displayPredictionsTable(predictions) {
+        const table = document.getElementById('predictionsTable');
+        if (!Array.isArray(predictions) || predictions.length === 0) {
+            table.innerHTML = '<div style="color: var(--muted); padding: 8px;">No predictions available.</div>';
+            return;
+        }
+
+        const rows = predictions.map((pred, idx) => {
+            const base = predictions[0]?.price ?? pred.price;
+            const change = idx === 0 ? 0 : (pred.price - base);
+            const changeStr = `${change > 0 ? '+' : ''}${change.toFixed(2)}`;
+            return `
+                <tr>
+                    <td>${pred.time}</td>
+                    <td>$${Number(pred.price).toFixed(2)}</td>
+                    <td>${changeStr}</td>
+                </tr>
+            `;
+        }).join('');
+
+        table.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Predicted Price</th>
+                        <th>Change from Open</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        `;
+    }
+</script>
+</body>
 </html>
