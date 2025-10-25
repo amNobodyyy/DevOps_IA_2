@@ -39,12 +39,34 @@ def fetch_intraday(symbol, interval="60min"):
         f"function=TIME_SERIES_INTRADAY&symbol={symbol}"
         f"&interval={interval}&outputsize=full&apikey={API_KEY}"
     )
+    
+    print(f"  Fetching from API: {symbol} (interval={interval})")
     response = requests.get(url)
+    
+    # Check HTTP status
+    if response.status_code != 200:
+        print(f"  ERROR: HTTP {response.status_code}")
+        print(f"  Response: {response.text[:200]}")
+        return None
+    
     data = response.json()
-
+    
+    # Debug: Print full response if there's an issue
     key = f"Time Series ({interval})"
     if key not in data:
-        print(f"WARNING {symbol}: {data.get('Note', data.get('Error Message', 'No intraday data'))}")
+        print(f"  WARNING {symbol}: API response does not contain expected data")
+        print(f"  Available keys: {list(data.keys())}")
+        
+        # Check for common API errors
+        if "Note" in data:
+            print(f"  API Note: {data['Note']}")
+        if "Error Message" in data:
+            print(f"  API Error: {data['Error Message']}")
+        if "Information" in data:
+            print(f"  API Info: {data['Information']}")
+        
+        # Print full response for debugging
+        print(f"  Full API Response: {json.dumps(data, indent=2)[:500]}")
         return None
 
     df = pd.DataFrame(data[key]).T
@@ -52,6 +74,7 @@ def fetch_intraday(symbol, interval="60min"):
     df = df.rename(columns=lambda x: x.split(". ")[1])
     df = df.sort_index()
     df["symbol"] = symbol
+    print(f"  ✓ Successfully fetched {len(df)} records")
     return df
 
 
@@ -163,7 +186,8 @@ def main():
     """Main data fetching orchestration."""
     print("=" * 60)
     print("Stock Intraday Data Fetcher - MLOps Pipeline")
-    print(f"Interval: {INTERVAL} (Hourly)")
+    print(f"Interval: {INTERVAL}")
+    print(f"Current UTC time: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
     # Load symbols from JSON
@@ -176,23 +200,52 @@ def main():
     print(f"  Existing stock data: {len(existing_stocks)}")
     print(f"  New stocks to fetch: {len(new_stocks)}")
 
+    # Track successes and failures
+    success_count = 0
+    failed_stocks = []
+
     # Process new stocks
     if new_stocks:
         print(f"\nProcessing {len(new_stocks)} new stocks...")
         for symbol in new_stocks:
-            handle_new_stock(symbol)
+            if handle_new_stock(symbol):
+                success_count += 1
+            else:
+                failed_stocks.append(symbol)
             time.sleep(20)  # Rate limiting
 
-    # Process existing stocks - update with today's data
+    # Process existing stocks - update with latest day's data
     if existing_stocks:
-        print(f"\nUpdating {len(existing_stocks)} existing stocks with today's intraday data...")
+        print(f"\nUpdating {len(existing_stocks)} existing stocks with latest intraday data...")
         for symbol in sorted(existing_stocks):
-            handle_existing_stock(symbol)
+            if handle_existing_stock(symbol):
+                success_count += 1
+            else:
+                failed_stocks.append(symbol)
             time.sleep(20)  # Rate limiting
 
     print("\n" + "=" * 60)
     print("Intraday data fetching completed!")
+    print(f"  Successfully updated: {success_count}/{len(symbols)} stocks")
+    
+    if failed_stocks:
+        print(f"  Failed stocks: {', '.join(failed_stocks)}")
+    
     print("=" * 60)
+    
+    # Exit with error code ONLY if no data was successfully saved
+    if success_count == 0:
+        print("\n❌ ERROR: No data was saved for any stock!")
+        print("This run is considered a FAILURE.")
+        raise SystemExit(1)  # Exit with error code 1
+    
+    # If some stocks succeeded, consider it a success (even if some failed)
+    if failed_stocks:
+        print(f"\n  WARNING: {len(failed_stocks)} stock(s) failed to update, but continuing...")
+        print("This run is considered a SUCCESS (partial update).")
+    else:
+        print("\n✅ SUCCESS: All stocks updated successfully!")
+    
 
 
 if __name__ == "__main__":
