@@ -187,7 +187,7 @@ def main():
     print("=" * 60)
     print("Stock Intraday Data Fetcher - MLOps Pipeline")
     print(f"Interval: {INTERVAL}")
-    print(f"Current UTC time: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Current UTC time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
     # Load symbols from JSON
