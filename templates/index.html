@@ -232,9 +232,7 @@
             <div class="col-12 col-md-8">
                 <label for="stock" class="form-label">Select Stock</label>
                 <select class="form-select" id="stock">
-                    <option value="" selected disabled>Choose a stock...</option>
-                    <option value="AAPL">AAPL - Apple Inc.</option>
-                    <option value="MSFT">MSFT - Microsoft Corp.</option>
+                    <option value="" selected disabled>Loading stocks...</option>
                 </select>
             </div>
             <div class="col-12 col-md-4 text-md-end">
@@ -294,6 +292,41 @@
     const resultsContainer = document.getElementById('resultsContainer');
     const errorAlert = document.getElementById('errorAlert');
     const errorMessage = document.getElementById('errorMessage');
+
+    // Load available stocks on page load
+    document.addEventListener('DOMContentLoaded', async function() {
+        try {
+            const response = await fetch('/api/symbols');
+            if (!response.ok) {
+                throw new Error(`Failed to load symbols: ${response.status}`);
+            }
+            const data = await response.json();
+            const symbols = data.symbols || [];
+            
+            // Clear the select and add options
+            stockSelect.innerHTML = '<option value="" selected disabled>Choose a stock...</option>';
+            
+            // Map of company names
+            const companyNames = {
+                'AAPL': 'Apple Inc.',
+                'MSFT': 'Microsoft Corp.',
+                'GOOGL': 'Alphabet Inc.',
+                'AMZN': 'Amazon Inc.',
+                'TSLA': 'Tesla Inc.',
+                'NVDA': 'NVIDIA Corp.'
+            };
+            
+            symbols.forEach(symbol => {
+                const option = document.createElement('option');
+                option.value = symbol;
+                option.textContent = `${symbol} - ${companyNames[symbol] || 'Stock'}`;
+                stockSelect.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Error loading symbols:', error);
+            stockSelect.innerHTML = '<option value="" disabled>Failed to load stocks</option>';
+        }
+    });
 
     // Enable/disable predict button based on stock selection
     stockSelect.addEventListener('change', function() {

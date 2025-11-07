@@ -130,6 +130,15 @@ def home():
     stocks = get_available_stocks()
     return render_template("index.html", stocks=stocks)
 
+@app.route("/api/symbols", methods=["GET"])
+def get_symbols():
+    """API endpoint to get available stock symbols."""
+    try:
+        stocks = get_available_stocks()
+        return jsonify({"symbols": stocks}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     """API endpoint for stock analysis."""
