@@ -25,23 +25,40 @@
             color: var(--text);
         }
         .dashboard-container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
+            padding: 0 12px;
         }
         .dashboard-header {
             margin-bottom: 28px;
             text-align: center;
         }
         .dashboard-header h1 {
-            font-size: 2rem;
+            font-size: 2.5rem;
             font-weight: 700;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             letter-spacing: -0.02em;
+        }
+        .dashboard-header .header-info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 24px;
+            flex-wrap: wrap;
         }
         .dashboard-header p {
             font-size: 0.95rem;
             color: var(--muted);
             margin: 0;
+        }
+        .header-date {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .header-time {
+            font-size: 0.9rem;
+            color: var(--muted);
         }
         .control-panel {
             background: var(--card);
@@ -119,18 +136,32 @@
             box-shadow: var(--shadow);
             border: 1px solid var(--border);
             overflow: hidden;
+            transition: box-shadow 0.3s ease;
+        }
+        .graph-card:hover {
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
         }
         .graph-title {
             color: var(--text);
             padding: 14px 16px;
             font-weight: 600;
             margin: 0;
-            border-bottom: 1px solid var(--border);
-            background: #fff;
+            border-bottom: 2px solid var(--accent);
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .graph-subtitle {
+            font-size: 0.8rem;
+            color: var(--muted);
+            font-weight: 400;
+            margin-left: auto;
         }
         .graph-content {
             padding: 16px;
-            min-height: 380px;
+            min-height: 420px;
+            background: #fafbfc;
         }
         .metrics-grid {
             display: grid;
@@ -211,14 +242,51 @@
         .prediction-table tr:hover {
             background: #f8fafc;
         }
+        .graph-info-panel {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+        }
+        .graph-info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: #f1f5f9;
+            border-radius: 6px;
+            border-left: 3px solid var(--accent);
+        }
+        .graph-info-item strong {
+            color: var(--text);
+        }
+        .graph-info-item span {
+            color: var(--muted);
+        }
+        .price-info {
+            border-left-color: #0ea5e9;
+        }
+        .change-info {
+            border-left-color: #8b5cf6;
+        }
+        .time-info {
+            border-left-color: #f59e0b;
+        }
     </style>
 </head>
 <body>
 <div class="dashboard-container">
     <!-- Header -->
     <div class="dashboard-header">
-        <h1>Stock prediction dashboard</h1>
-        <p>Intraday forecast and model metrics</p>
+        <h1>Stock Prediction Dashboard</h1>
+        <div class="header-info">
+            <p>Intraday forecast and model metrics</p>
+            <div style="display: flex; gap: 12px; align-items: center;">
+                <span class="header-date" id="currentDate"></span>
+                <span class="header-time" id="currentTime"></span>
+            </div>
+        </div>
     </div>
 
     <!-- Error Alert -->
@@ -261,14 +329,22 @@
         <!-- Graphs Grid -->
         <div class="graphs-container">
             <div class="graph-card">
-                <div class="graph-title">Last trading day</div>
+                <div class="graph-title">
+                    <span>📊 Last Trading Day</span>
+                    <span class="graph-subtitle" id="lastDayDate"></span>
+                </div>
                 <div class="graph-content">
+                    <div id="graphLastDayInfo" class="graph-info-panel"></div>
                     <div id="graphLastDay" style="width: 100%; height: 350px;"></div>
                 </div>
             </div>
             <div class="graph-card">
-                <div class="graph-title">Next hour predictions</div>
+                <div class="graph-title">
+                    <span>🔮 Next Hour Predictions</span>
+                    <span class="graph-subtitle" id="nextHourDate"></span>
+                </div>
                 <div class="graph-content">
+                    <div id="graphNextHourInfo" class="graph-info-panel"></div>
                     <div id="graphNextHour" style="width: 100%; height: 350px;"></div>
                 </div>
             </div>
@@ -276,7 +352,10 @@
 
         <!-- Predictions Table -->
         <div class="graph-card">
-            <div class="graph-title">Detailed predictions</div>
+            <div class="graph-title">
+                <span>📋 Detailed Predictions</span>
+                <span class="graph-subtitle" id="tableDate"></span>
+            </div>
             <div class="graph-content">
                 <div class="prediction-table" id="predictionsTable">
                 </div>
@@ -292,6 +371,26 @@
     const resultsContainer = document.getElementById('resultsContainer');
     const errorAlert = document.getElementById('errorAlert');
     const errorMessage = document.getElementById('errorMessage');
+
+    // Utility function to format date and time
+    function updateDateTime() {
+        const now = new Date();
+        
+        // Format date as "Friday, November 7, 2025"
+        const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+        const dateStr = now.toLocaleDateString('en-US', dateOptions);
+        
+        // Format time as "2:30 PM"
+        const timeOptions = { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true };
+        const timeStr = now.toLocaleTimeString('en-US', timeOptions);
+        
+        document.getElementById('currentDate').textContent = dateStr;
+        document.getElementById('currentTime').textContent = timeStr;
+    }
+
+    // Update date/time on load and every second
+    updateDateTime();
+    setInterval(updateDateTime, 1000);
 
     // Load available stocks on page load
     document.addEventListener('DOMContentLoaded', async function() {
@@ -358,29 +457,80 @@
 
             const data = await response.json();
 
-            // Display graphs (API returns Plotly JSON as string; parse if needed)
+            // Display graphs with enhanced styling
             const lastObj = typeof data.graph_last_day === 'string' ? JSON.parse(data.graph_last_day) : data.graph_last_day;
             if (lastObj && lastObj.data && lastObj.layout) {
-                Plotly.newPlot('graphLastDay', lastObj.data, lastObj.layout, { responsive: true });
+                // Enhance last day graph layout
+                const enhancedLastLayout = {
+                    ...lastObj.layout,
+                    font: { family: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif' },
+                    plot_bgcolor: '#fafbfc',
+                    paper_bgcolor: '#ffffff',
+                    hovermode: 'x unified',
+                    xaxis: {
+                        ...lastObj.layout.xaxis,
+                        gridcolor: '#e5e7eb',
+                        showgrid: true,
+                        zeroline: false
+                    },
+                    yaxis: {
+                        ...lastObj.layout.yaxis,
+                        gridcolor: '#e5e7eb',
+                        showgrid: true,
+                        zeroline: false
+                    }
+                };
+                Plotly.newPlot('graphLastDay', lastObj.data, enhancedLastLayout, { responsive: true });
+                updateGraphInfo('graphLastDayInfo', data, 'last_day');
             }
 
             const nextObj = data.graph_next_hour ? (typeof data.graph_next_hour === 'string' ? JSON.parse(data.graph_next_hour) : data.graph_next_hour) : null;
             if (nextObj && nextObj.data && nextObj.layout) {
-                Plotly.newPlot('graphNextHour', nextObj.data, nextObj.layout, { responsive: true });
+                // Enhance next hour graph layout
+                const enhancedNextLayout = {
+                    ...nextObj.layout,
+                    font: { family: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif' },
+                    plot_bgcolor: '#fafbfc',
+                    paper_bgcolor: '#ffffff',
+                    hovermode: 'x unified',
+                    xaxis: {
+                        ...nextObj.layout.xaxis,
+                        gridcolor: '#e5e7eb',
+                        showgrid: true,
+                        zeroline: false
+                    },
+                    yaxis: {
+                        ...nextObj.layout.yaxis,
+                        gridcolor: '#e5e7eb',
+                        showgrid: true,
+                        zeroline: false
+                    }
+                };
+                Plotly.newPlot('graphNextHour', nextObj.data, enhancedNextLayout, { responsive: true });
+                updateGraphInfo('graphNextHourInfo', data, 'next_hour');
             } else {
-                // Clear graph if no predictions
                 Plotly.purge('graphNextHour');
             }
 
-            // Display metrics (backend provides nested training/prediction sections)
+            // Display metrics
             displayMetrics(data.metrics);
 
-            // Display predictions table (extract inner array if wrapped)
+            // Display predictions table
             const predsArray = data && data.predictions
                 ? (Array.isArray(data.predictions) ? data.predictions
                    : (Array.isArray(data.predictions.predictions) ? data.predictions.predictions : []))
                 : [];
             displayPredictionsTable(predsArray);
+
+            // Update dates on graph cards
+            const now = new Date();
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            
+            const dateOptions = { month: 'short', day: 'numeric', year: '2-digit' };
+            document.getElementById('lastDayDate').textContent = yesterday.toLocaleDateString('en-US', dateOptions);
+            document.getElementById('nextHourDate').textContent = now.toLocaleDateString('en-US', dateOptions);
+            document.getElementById('tableDate').textContent = now.toLocaleDateString('en-US', dateOptions);
 
             // Show results
             resultsContainer.style.display = 'block';
@@ -393,6 +543,33 @@
             loadingSpinner.classList.remove('show');
         }
     });
+
+    // Update graph info panels with key metrics
+    function updateGraphInfo(elementId, data, graphType) {
+        const panel = document.getElementById(elementId);
+        const info = [];
+
+        if (graphType === 'last_day' && data.predictions) {
+            const currentPrice = data.predictions.current_price;
+            if (currentPrice) {
+                info.push(`<div class="graph-info-item price-info"><strong>Current Price:</strong> <span>$${currentPrice.toFixed(2)}</span></div>`);
+            }
+        }
+
+        if (graphType === 'next_hour' && data.predictions) {
+            const predictedOpen = data.predictions.predicted_open;
+            const change = data.predictions.change;
+            if (predictedOpen) {
+                info.push(`<div class="graph-info-item price-info"><strong>Predicted Open:</strong> <span>$${predictedOpen.toFixed(2)}</span></div>`);
+            }
+            if (change !== undefined) {
+                const direction = change >= 0 ? '📈' : '📉';
+                info.push(`<div class="graph-info-item change-info"><strong>${direction} Change:</strong> <span>${change >= 0 ? '+' : ''}${change.toFixed(2)}</span></div>`);
+            }
+        }
+
+        panel.innerHTML = info.join('');
+    }
 
     function displayMetrics(metrics) {
         const metricsGrid = document.getElementById('metricsGrid');
@@ -408,10 +585,10 @@
             const trainR2 = parseFloat(metrics.training.train_r2 || '0');
 
             const metricsData = [
-                { label: 'Model R²', value: r2 },
-                { label: 'RMSE', value: rmse },
-                { label: 'MAE', value: mae },
-                { label: 'Training R²', value: trainR2 }
+                { label: '📊 Model R²', value: r2 },
+                { label: '📉 RMSE', value: rmse },
+                { label: '📏 MAE', value: mae },
+                { label: '🎯 Training R²', value: trainR2 }
             ];
 
             metricsData.forEach(metric => {
@@ -438,8 +615,9 @@
                 const summaryCard = document.createElement('div');
                 summaryCard.className = 'metric-card';
                 const changeClass = priceChange >= 0 ? 'positive' : 'negative';
+                const direction = priceChange >= 0 ? '📈' : '📉';
                 summaryCard.innerHTML = `
-                    <div class="metric-label">Predicted price change</div>
+                    <div class="metric-label">${direction} Predicted Price Change</div>
                     <div class="metric-value ${changeClass}">
                         ${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}
                         <div style="font-size: 0.8rem; margin-top: 5px;">(${priceChange >= 0 ? '+' : ''}${pctChange.toFixed(2)}%)</div>
@@ -461,11 +639,12 @@
             const base = predictions[0]?.price ?? pred.price;
             const change = idx === 0 ? 0 : (pred.price - base);
             const changeStr = `${change > 0 ? '+' : ''}${change.toFixed(2)}`;
+            const changeClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
             return `
                 <tr>
-                    <td>${pred.time}</td>
+                    <td><strong>${pred.time}</strong></td>
                     <td>$${Number(pred.price).toFixed(2)}</td>
-                    <td>${changeStr}</td>
+                    <td><span style="color: ${change > 0 ? '#16a34a' : (change < 0 ? '#dc2626' : '#64748b')};">${changeStr}</span></td>
                 </tr>
             `;
         }).join('');
@@ -474,9 +653,9 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Time</th>
-                        <th>Predicted Price</th>
-                        <th>Change from Open</th>
+                        <th>⏰ Time</th>
+                        <th>💰 Predicted Price</th>
+                        <th>📊 Change from Open</th>
                     </tr>
                 </thead>
                 <tbody>
