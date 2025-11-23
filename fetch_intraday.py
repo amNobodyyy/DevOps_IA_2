@@ -37,7 +37,7 @@ def fetch_intraday(symbol, interval="60min"):
     url = (
         f"https://www.alphavantage.co/query?"
         f"function=TIME_SERIES_INTRADAY&symbol={symbol}"
-        f"&interval={interval}&outputsize=full&apikey={API_KEY}"
+        f"&interval={interval}&outputsize=compact&apikey={API_KEY}"
     )
     
     print(f"  Fetching from API: {symbol} (interval={interval})")
