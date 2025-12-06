@@ -1,15 +1,11 @@
-import requests
+import yfinance as yf
 import pandas as pd
 import json
 import os
-import time
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timedelta
 
-API_KEY = "HHSZ9DN4NN6WKXKF"
 DATA_DIR = "data"
 SYMBOLS_FILE = "symbols.json"
-INTERVAL = "5min"  # Intraday 5-minute data
 
 # Create data directory if it doesn't exist
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -32,76 +28,118 @@ def get_existing_stocks():
     return existing
 
 
-def fetch_intraday(symbol, interval="60min"):
-    """Fetch all intraday (hourly) data for a symbol from Alpha Vantage."""
-    url = (
-        f"https://www.alphavantage.co/query?"
-        f"function=TIME_SERIES_INTRADAY&symbol={symbol}"
-        f"&interval={interval}&outputsize=compact&apikey={API_KEY}"
-    )
+def fetch_intraday_yfinance(symbol, interval="2m", period=None, start=None, end=None):
+    """
+    Fetch intraday data for a symbol using yfinance.
     
-    print(f"  Fetching from API: {symbol} (interval={interval})")
-    response = requests.get(url)
+    Args:
+        symbol: Stock ticker symbol
+        interval: '1m', '5m', '15m', '30m', '60m', '1h'
+        period: '1d', '5d', '1mo', '2mo' (use either period OR start/end)
+        start/end: datetime objects or strings for date range
     
-    # Check HTTP status
-    if response.status_code != 200:
-        print(f"  ERROR: HTTP {response.status_code}")
-        print(f"  Response: {response.text[:200]}")
-        return None
+    Returns:
+        DataFrame with OHLCV data or None if failed
+    """
+    print(f"  Fetching from yfinance: {symbol} (interval={interval})")
     
-    data = response.json()
-    
-    # Debug: Print full response if there's an issue
-    key = f"Time Series ({interval})"
-    if key not in data:
-        print(f"  WARNING {symbol}: API response does not contain expected data")
-        print(f"  Available keys: {list(data.keys())}")
+    try:
+        ticker = yf.Ticker(symbol)
         
-        # Check for common API errors
-        if "Note" in data:
-            print(f"  API Note: {data['Note']}")
-        if "Error Message" in data:
-            print(f"  API Error: {data['Error Message']}")
-        if "Information" in data:
-            print(f"  API Info: {data['Information']}")
+        if period:
+            df = ticker.history(period=period, interval=interval)
+        else:
+            df = ticker.history(start=start, end=end, interval=interval)
         
-        # Print full response for debugging
-        print(f"  Full API Response: {json.dumps(data, indent=2)[:500]}")
+        if df.empty:
+            print(f"  WARNING {symbol}: No data returned from yfinance")
+            return None
+        
+        # Rename columns to match existing format (lowercase)
+        df = df.rename(columns={
+            'Open': 'open',
+            'High': 'high',
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume'
+        })
+        
+        # Keep only the columns we need
+        cols_to_keep = ['open', 'high', 'low', 'close', 'volume']
+        df = df[[col for col in cols_to_keep if col in df.columns]]
+        
+        # Add symbol column
+        df['symbol'] = symbol
+        
+        print(f"  ✓ Successfully fetched {len(df)} records")
+        return df
+        
+    except Exception as e:
+        print(f"  ERROR fetching {symbol}: {str(e)}")
         return None
 
-    df = pd.DataFrame(data[key]).T
-    df.index = pd.to_datetime(df.index)
-    df = df.rename(columns=lambda x: x.split(". ")[1])
-    df = df.sort_index()
-    df["symbol"] = symbol
-    print(f"  ✓ Successfully fetched {len(df)} records")
+
+def fetch_new_stock_data(symbol):
+    """
+    Fetch data for a NEW stock: 5-minute interval for last 60 days.
+    yfinance allows max 60 days for 5m interval.
+    """
+    print(f"Fetching 60 days of 2-minute data for NEW stock: {symbol}...")
+    df = fetch_intraday_yfinance(symbol, interval="2m", period="60d")
     return df
 
 
-def fetch_all_historical_data(symbol):
-    """Fetch all available intraday data for a new stock."""
-    print(f"Fetching ALL historical intraday ({INTERVAL}) data for {symbol}...")
-    df = fetch_intraday(symbol, interval=INTERVAL)
-    return df
-
-
-def fetch_today_data(symbol):
-    """Fetch today's intraday data for an existing stock."""
-    print(f"Fetching today's intraday ({INTERVAL}) data for {symbol}...")
-    df = fetch_intraday(symbol, interval=INTERVAL)
-    if df is None:
+def fetch_existing_stock_data(symbol):
+    """
+    Fetch data for an EXISTING stock: 1-minute interval for the previous trading day.
+    This is used for daily retraining.
+    """
+    print(f"Fetching previous day's 1-minute data for EXISTING stock: {symbol}...")
+    
+    # Calculate previous trading day
+    today = datetime.now()
+    
+    # Go back to find the previous trading day (skip weekends)
+    days_back = 1
+    prev_day = today - timedelta(days=days_back)
+    
+    # Skip weekends (Saturday=5, Sunday=6)
+    while prev_day.weekday() >= 5:
+        days_back += 1
+        prev_day = today - timedelta(days=days_back)
+    
+    # For 1m data, we need to fetch a small period
+    # yfinance 1m data is available for last 7 days only
+    # We'll fetch last 5 days and filter to the previous trading day
+    df = fetch_intraday_yfinance(symbol, interval="1m", period="5d")
+    
+    if df is None or df.empty:
         return None
-
-    # Filter to only today's data
-    latest_date = df.index.date.max()
-    today_df = df[df.index.date == latest_date].copy()
-    return today_df if len(today_df) > 0 else None
+    
+    # Filter to only the previous trading day's data
+    prev_day_str = prev_day.strftime("%Y-%m-%d")
+    df_filtered = df[df.index.strftime("%Y-%m-%d") == prev_day_str].copy()
+    
+    if df_filtered.empty:
+        # Try to get the most recent day's data available
+        available_dates = df.index.strftime("%Y-%m-%d").unique()
+        if len(available_dates) > 0:
+            latest_date = sorted(available_dates)[-1]
+            print(f"  No data for {prev_day_str}, using latest available: {latest_date}")
+            df_filtered = df[df.index.strftime("%Y-%m-%d") == latest_date].copy()
+    
+    if df_filtered.empty:
+        print(f"  WARNING: No data available for previous trading day")
+        return None
+    
+    print(f"  Filtered to {len(df_filtered)} records for date: {df_filtered.index[0].strftime('%Y-%m-%d')}")
+    return df_filtered
 
 
 def save_stock_data(symbol, df, data_type="history"):
     """
     Save stock data to CSV.
-    data_type: 'history' for all historical data or 'today' for daily updates
+    data_type: 'history' for new stock historical data or 'daily' for daily updates
     """
     if df is None or len(df) == 0:
         return False
@@ -112,18 +150,22 @@ def save_stock_data(symbol, df, data_type="history"):
     # Check if index contains datetime (timestamp)
     if isinstance(df_to_save.index, pd.DatetimeIndex):
         df_to_save = df_to_save.reset_index()
-        # Rename the index column to 'timestamp' if it doesn't have a name
-        if df_to_save.columns[0] == 'index':
+        # Rename the index column to 'timestamp'
+        if 'Datetime' in df_to_save.columns:
+            df_to_save.rename(columns={'Datetime': 'timestamp'}, inplace=True)
+        elif 'Date' in df_to_save.columns:
+            df_to_save.rename(columns={'Date': 'timestamp'}, inplace=True)
+        elif 'index' in df_to_save.columns:
             df_to_save.rename(columns={'index': 'timestamp'}, inplace=True)
-    elif 'timestamp' not in df_to_save.columns:
-        # If no timestamp column and index is not datetime, use index as timestamp
-        df_to_save = df_to_save.reset_index()
-        if 'timestamp' not in df_to_save.columns:
+        elif df_to_save.columns[0] not in ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'symbol']:
             df_to_save.rename(columns={df_to_save.columns[0]: 'timestamp'}, inplace=True)
     
-    # Ensure timestamp column is datetime
+    # Ensure timestamp column exists and is datetime
     if 'timestamp' in df_to_save.columns:
         df_to_save["timestamp"] = pd.to_datetime(df_to_save["timestamp"])
+        # Remove timezone info to match Alpha Vantage format
+        if df_to_save["timestamp"].dt.tz is not None:
+            df_to_save["timestamp"] = df_to_save["timestamp"].dt.tz_localize(None)
 
     # Convert numeric columns
     numeric_cols = ["open", "high", "low", "close", "volume"]
@@ -132,63 +174,67 @@ def save_stock_data(symbol, df, data_type="history"):
             df_to_save[col] = pd.to_numeric(df_to_save[col], errors="coerce")
 
     # Sort by timestamp ascending (oldest first)
-    df_to_save = df_to_save.sort_values("timestamp").reset_index(drop=True)
+    if 'timestamp' in df_to_save.columns:
+        df_to_save = df_to_save.sort_values("timestamp").reset_index(drop=True)
 
     if data_type == "history":
+        # For new stocks: save as {SYMBOL}_history.csv with 5m interval data
         filepath = os.path.join(DATA_DIR, f"{symbol}_history.csv")
         df_to_save.to_csv(filepath, index=False)
         print(f"Saved historical data: {filepath} ({len(df_to_save)} records)")
-    elif data_type == "today":
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        filepath = os.path.join(DATA_DIR, f"{symbol}_{today_str}.csv")
+    elif data_type == "daily":
+        # For existing stocks: save as {SYMBOL}_{DATE}.csv with 1m interval data
+        if 'timestamp' in df_to_save.columns and len(df_to_save) > 0:
+            date_str = df_to_save['timestamp'].iloc[0].strftime("%Y-%m-%d")
+        else:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+        filepath = os.path.join(DATA_DIR, f"{symbol}_{date_str}.csv")
         df_to_save.to_csv(filepath, index=False)
-        print(f"Saved today's data: {filepath} ({len(df_to_save)} records)")
+        print(f"Saved daily data: {filepath} ({len(df_to_save)} records)")
 
     return True
 
 
 def handle_new_stock(symbol):
-    """Handle a new stock: fetch and save all historical + today's intraday data."""
-    print(f"\nNEW STOCK: {symbol}")
+    """Handle a NEW stock: fetch 60 days of 5-minute data."""
+    print(f"\n{'='*40}")
+    print(f"NEW STOCK: {symbol}")
+    print(f"{'='*40}")
     
-    # Fetch all historical intraday data
-    hist_df = fetch_all_historical_data(symbol)
+    # Fetch 60 days of 5-minute data
+    hist_df = fetch_new_stock_data(symbol)
     if hist_df is not None:
         save_stock_data(symbol, hist_df, data_type="history")
+        return True
     else:
-        print(f"ERROR: Failed to fetch historical intraday data for {symbol}")
+        print(f"ERROR: Failed to fetch data for {symbol}")
         return False
-
-    # Also save today's data
-    time.sleep(20)  # Rate limiting
-    today_df = fetch_today_data(symbol)
-    if today_df is not None:
-        save_stock_data(symbol, today_df, data_type="today")
-    else:
-        print(f"WARNING: No today's intraday data available for {symbol}")
-
-    return True
 
 
 def handle_existing_stock(symbol):
-    """Handle an existing stock: fetch and save only today's intraday data."""
-    print(f"\nEXISTING STOCK: {symbol}")
-    today_df = fetch_today_data(symbol)
-    if today_df is not None:
-        save_stock_data(symbol, today_df, data_type="today")
+    """Handle an EXISTING stock: fetch previous day's 1-minute data for retraining."""
+    print(f"\n{'='*40}")
+    print(f"EXISTING STOCK: {symbol}")
+    print(f"{'='*40}")
+    
+    daily_df = fetch_existing_stock_data(symbol)
+    if daily_df is not None:
+        save_stock_data(symbol, daily_df, data_type="daily")
         return True
     else:
-        print(f"WARNING: No today's intraday data available for {symbol}")
+        print(f"WARNING: No daily data available for {symbol}")
         return False
 
 
 def main():
     """Main data fetching orchestration."""
     print("=" * 60)
-    print("Stock Intraday Data Fetcher - MLOps Pipeline")
-    print(f"Interval: {INTERVAL}")
-    print(f"Current UTC time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("Stock Intraday Data Fetcher - MLOps Pipeline (yfinance)")
+    print(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
+    print("\nData fetching strategy:")
+    print("  - NEW stocks: 5-minute interval, last 60 days")
+    print("  - EXISTING stocks: 1-minute interval, previous trading day")
 
     # Load symbols from JSON
     symbols = load_symbols()
@@ -204,25 +250,27 @@ def main():
     success_count = 0
     failed_stocks = []
 
-    # Process new stocks
+    # Process new stocks (5m interval, 2 months)
     if new_stocks:
-        print(f"\nProcessing {len(new_stocks)} new stocks...")
+        print(f"\n{'#'*60}")
+        print(f"Processing {len(new_stocks)} NEW stocks (2m interval, 60 days)...")
+        print(f"{'#'*60}")
         for symbol in new_stocks:
             if handle_new_stock(symbol):
                 success_count += 1
             else:
                 failed_stocks.append(symbol)
-            time.sleep(20)  # Rate limiting
 
-    # Process existing stocks - update with latest day's data
+    # Process existing stocks (1m interval, previous day)
     if existing_stocks:
-        print(f"\nUpdating {len(existing_stocks)} existing stocks with latest intraday data...")
+        print(f"\n{'#'*60}")
+        print(f"Processing {len(existing_stocks)} EXISTING stocks (1m interval, previous day)...")
+        print(f"{'#'*60}")
         for symbol in sorted(existing_stocks):
             if handle_existing_stock(symbol):
                 success_count += 1
             else:
                 failed_stocks.append(symbol)
-            time.sleep(20)  # Rate limiting
 
     print("\n" + "=" * 60)
     print("Intraday data fetching completed!")
@@ -237,15 +285,14 @@ def main():
     if success_count == 0:
         print("\n❌ ERROR: No data was saved for any stock!")
         print("This run is considered a FAILURE.")
-        raise SystemExit(1)  # Exit with error code 1
+        raise SystemExit(1)
     
-    # If some stocks succeeded, consider it a success (even if some failed)
+    # If some stocks succeeded, consider it a success
     if failed_stocks:
-        print(f"\n  WARNING: {len(failed_stocks)} stock(s) failed to update, but continuing...")
+        print(f"\n⚠️ WARNING: {len(failed_stocks)} stock(s) failed to update, but continuing...")
         print("This run is considered a SUCCESS (partial update).")
     else:
         print("\n✅ SUCCESS: All stocks updated successfully!")
-    
 
 
 if __name__ == "__main__":

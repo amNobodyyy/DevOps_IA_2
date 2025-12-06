@@ -41,9 +41,19 @@ def get_stock_history_file(symbol):
 
 
 def get_stock_today_file(symbol):
-    """Get the path to today's data file for a stock."""
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    return os.path.join(DATA_DIR, f"{symbol}_{today_str}.csv")
+    """Get the path to the most recent daily data file for a stock."""
+    # Look for the most recent daily file (not history)
+    # Files are named: {SYMBOL}_{DATE}.csv
+    data_dir = Path(DATA_DIR)
+    pattern = f"{symbol}_????-??-??.csv"
+    
+    daily_files = list(data_dir.glob(pattern))
+    if not daily_files:
+        return None
+    
+    # Sort by filename (date) and get the most recent
+    daily_files.sort(reverse=True)
+    return str(daily_files[0])
 
 
 def get_model_path(symbol):
@@ -97,8 +107,8 @@ def save_metrics(symbol, metrics_data):
 
 def load_stock_data(symbol, include_today=False):
     """
-    Load stock data for a symbol.
-    If include_today=True, appends today's data to historical data.
+    Load stock data for a symbol from history file.
+    Does NOT append daily data - that's done separately in append_daily_to_history().
     """
     hist_file = get_stock_history_file(symbol)
     
@@ -109,21 +119,60 @@ def load_stock_data(symbol, include_today=False):
     df = pd.read_csv(hist_file)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
-    # Append today's data if available and requested
-    if include_today:
-        today_file = get_stock_today_file(symbol)
-        if os.path.exists(today_file):
-            today_df = pd.read_csv(today_file)
-            today_df["timestamp"] = pd.to_datetime(today_df["timestamp"])
-            df = pd.concat([df, today_df], ignore_index=True)
-            print(f"  Appended today's {len(today_df)} records")
-
     # Remove duplicates and sort
     df = df.drop_duplicates(subset=["timestamp"], keep="last").reset_index(drop=True)
     df = df.sort_values("timestamp").reset_index(drop=True)
 
     print(f"  Loaded {len(df)} records for {symbol}")
     return df
+
+
+def append_daily_to_history(symbol):
+    """
+    Append the most recent daily data file to the history CSV.
+    This permanently adds the new data to history.
+    Returns True if data was appended, False otherwise.
+    """
+    hist_file = get_stock_history_file(symbol)
+    today_file = get_stock_today_file(symbol)
+    
+    if not today_file or not os.path.exists(today_file):
+        print(f"  No daily data file found for {symbol}")
+        return False
+    
+    if not os.path.exists(hist_file):
+        print(f"  No history file found for {symbol}")
+        return False
+    
+    # Load history
+    hist_df = pd.read_csv(hist_file)
+    hist_df["timestamp"] = pd.to_datetime(hist_df["timestamp"])
+    
+    # Load daily data
+    daily_df = pd.read_csv(today_file)
+    daily_df["timestamp"] = pd.to_datetime(daily_df["timestamp"])
+    
+    # Check if this daily data is already in history (avoid duplicates)
+    daily_date = daily_df["timestamp"].iloc[0].strftime("%Y-%m-%d")
+    existing_dates = hist_df["timestamp"].dt.strftime("%Y-%m-%d").unique()
+    
+    if daily_date in existing_dates:
+        print(f"  Daily data for {daily_date} already in history, skipping append")
+        return False
+    
+    # Append daily data to history
+    combined_df = pd.concat([hist_df, daily_df], ignore_index=True)
+    
+    # Remove duplicates and sort
+    combined_df = combined_df.drop_duplicates(subset=["timestamp"], keep="last").reset_index(drop=True)
+    combined_df = combined_df.sort_values("timestamp").reset_index(drop=True)
+    
+    # Save updated history
+    combined_df.to_csv(hist_file, index=False)
+    print(f"  ✓ Appended {len(daily_df)} records from {daily_date} to history")
+    print(f"  ✓ Updated history saved: {hist_file} (total: {len(combined_df)} records)")
+    
+    return True
 
 
 def add_technical_indicators(df):
@@ -255,11 +304,13 @@ def train_stock_model(symbol, retrain=False):
     Train a new LSTM model for a stock or update existing one.
     retrain=True: Load existing model and continue training
     retrain=False: Train new model from scratch
+    
+    Trains on the FULL history data (after daily data has been appended).
     """
     print(f"\nTraining LSTM model for {symbol}...")
 
-    # Load data
-    df = load_stock_data(symbol, include_today=True)
+    # Load data from history file (already includes appended daily data)
+    df = load_stock_data(symbol)
     if df is None or len(df) < 50:
         print(f"ERROR: Insufficient data for {symbol} (need at least 50 records)")
         return False
@@ -417,8 +468,8 @@ def predict_next_close(symbol):
     with open(scaler_path, 'rb') as f:
         scaler = pickle.load(f)
 
-    # Load latest data
-    df = load_stock_data(symbol, include_today=True)
+    # Load history data (already includes all appended daily data)
+    df = load_stock_data(symbol)
     if df is None or len(df) < 50:
         print(f"ERROR: Insufficient data for prediction")
         return None
@@ -494,16 +545,23 @@ def predict_next_close(symbol):
 
 
 def main():
-    """Main model training orchestration."""
+    """Main model training orchestration.
+    
+    Flow:
+    1. For each existing stock: Append daily data to history CSV
+    2. Train/retrain model on full history
+    3. Make predictions
+    """
     print("=" * 60)
     print("Stock Model Trainer - MLOps Pipeline")
     print("=" * 60)
 
     symbols = load_symbols()
-    print(f"\nTraining models for {len(symbols)} stocks...")
+    print(f"\nProcessing {len(symbols)} stocks...")
 
     trained_count = 0
     updated_count = 0
+    appended_count = 0
 
     for symbol in symbols:
         model_path = get_model_path(symbol)
@@ -514,7 +572,15 @@ def main():
             print(f"\nSkipping {symbol} - no historical data found")
             continue
 
-        # Check if model exists
+        print(f"\n{'='*40}")
+        print(f"Processing: {symbol}")
+        print(f"{'='*40}")
+
+        # Step 1: Append daily data to history (if available)
+        if append_daily_to_history(symbol):
+            appended_count += 1
+
+        # Step 2: Train or retrain model on full history
         if os.path.exists(model_path):
             # Update existing model
             success = update_stock_model(symbol)
@@ -526,7 +592,7 @@ def main():
             if success:
                 trained_count += 1
 
-    # Make predictions for all models
+    # Step 3: Make predictions for all models
     print("\n" + "=" * 60)
     print("Making predictions...")
     print("=" * 60)
@@ -538,6 +604,7 @@ def main():
 
     print("\n" + "=" * 60)
     print("Model training completed!")
+    print(f"  Daily data appended: {appended_count} stocks")
     print(f"  New models trained: {trained_count}")
     print(f"  Existing models updated: {updated_count}")
     print("=" * 60)

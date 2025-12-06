@@ -4,13 +4,16 @@ import plotly.graph_objects as go
 import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 import numpy as np
-from model_trainer import load_metrics_history, get_model_path, get_scaler_path, add_technical_indicators, load_stock_data
+from model_trainer import load_metrics_history, get_model_path, get_scaler_path, add_technical_indicators, get_stock_history_file
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import pickle
 
 app = Flask(__name__)
+
+DATA_DIR = "data"
 
 # Get available stocks from symbols.json
 def get_available_stocks():
@@ -20,16 +23,52 @@ def get_available_stocks():
     return config.get("stocks", [])
 
 def get_last_day_data(symbol):
-    """Get yesterday's data for the stock."""
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    today_file = os.path.join("data", f"{symbol}_{today_str}.csv")
+    """Get the most recent trading day's data from the HISTORY file (for graph)."""
+    hist_file = get_stock_history_file(symbol)
     
-    if os.path.exists(today_file):
-        df = pd.read_csv(today_file)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        return df.sort_values("timestamp").reset_index(drop=True)
+    if not os.path.exists(hist_file):
+        return None, None
     
-    return None
+    df = pd.read_csv(hist_file)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    
+    if df.empty:
+        return None, None
+    
+    # Get the last trading day's date
+    last_date = df["timestamp"].dt.strftime("%Y-%m-%d").iloc[-1]
+    
+    # Filter to only that day's data
+    last_day_df = df[df["timestamp"].dt.strftime("%Y-%m-%d") == last_date].copy()
+    last_day_df = last_day_df.reset_index(drop=True)
+    
+    return last_day_df, last_date
+
+
+def load_history_data(symbol):
+    """Load the full history CSV for predictions."""
+    hist_file = get_stock_history_file(symbol)
+    
+    if not os.path.exists(hist_file):
+        return None
+    
+    df = pd.read_csv(hist_file)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    return df
+
+
+def get_next_trading_day(last_date_str):
+    """Calculate the next trading day (skip weekends)."""
+    last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
+    next_day = last_date + timedelta(days=1)
+    
+    # Skip weekends
+    while next_day.weekday() >= 5:  # Saturday=5, Sunday=6
+        next_day += timedelta(days=1)
+    
+    return next_day
 
 def get_metrics_for_stock(symbol):
     """Get latest metrics for a stock."""
@@ -52,8 +91,11 @@ def get_metrics_for_stock(symbol):
         "prediction": latest_pred
     }
 
-def predict_next_hour(symbol):
-    """Predict next hour's prices at 5-min intervals."""
+def predict_next_hour(symbol, next_trading_day):
+    """Predict next trading day's first hour prices at 1-min intervals (9:30 AM - 10:30 AM).
+    
+    Uses the HISTORY CSV for predictions (trained model expects full history context).
+    """
     try:
         model_path = get_model_path(symbol)
         scaler_path = get_scaler_path(symbol)
@@ -61,15 +103,15 @@ def predict_next_hour(symbol):
         if not os.path.exists(model_path) or not os.path.exists(scaler_path):
             return None, "Model or scaler not found"
         
-        # Load model and scaler
+        # Load model and scaler (trained by model_trainer.py)
         model = load_model(model_path, compile=False)
         with open(scaler_path, 'rb') as f:
             scaler = pickle.load(f)
         
-        # Load data
-        df = load_stock_data(symbol, include_today=True)
-        if df is None or len(df) < 50:
-            return None, "Insufficient data"
+        # Load HISTORY data for predictions (includes all appended daily data)
+        df = load_history_data(symbol)
+        if df is None or len(df) < 10:
+            return None, "Insufficient history data for prediction"
         
         # Add features
         df = add_technical_indicators(df)
@@ -87,17 +129,18 @@ def predict_next_hour(symbol):
             cols.append(target_col)
             df = df[cols]
         
-        # Scale data
+        # Scale data using the trained scaler
         df_scaled = scaler.transform(df.values)
         
-        # Generate predictions for next 12 5-min intervals (1 hour)
+        # Generate predictions for 60 1-min intervals (1 hour: 9:30 AM - 10:30 AM)
         window = 10
         predictions = []
         current_data = df_scaled[-window:].copy()
         
-        base_time = datetime.now() + timedelta(minutes=5)
+        # Start at 9:30 AM on the next trading day
+        base_time = next_trading_day.replace(hour=9, minute=30, second=0, microsecond=0)
         
-        for i in range(12):
+        for i in range(60):  # 60 minutes = 1 hour
             # Reshape for prediction
             x_pred = np.reshape(current_data, (1, window, df_scaled.shape[1]))
             
@@ -109,9 +152,10 @@ def predict_next_hour(symbol):
             dummy[:, -1] = pred_scaled
             pred_price = scaler.inverse_transform(dummy)[0, -1]
             
-            pred_time = base_time + timedelta(minutes=i*5)
+            pred_time = base_time + timedelta(minutes=i)
             predictions.append({
                 "time": pred_time.strftime("%H:%M"),
+                "full_time": pred_time.strftime("%Y-%m-%d %H:%M"),
                 "price": float(pred_price)
             })
             
@@ -149,12 +193,15 @@ def analyze():
         if not symbol:
             return jsonify({"error": "Symbol required"}), 400
         
-        # Get last day's data
-        last_day = get_last_day_data(symbol)
+        # Get last trading day's data
+        last_day, last_date_str = get_last_day_data(symbol)
         if last_day is None:
             return jsonify({"error": "No data found for symbol"}), 404
         
-        # Create last day graph
+        # Calculate next trading day for predictions
+        next_trading_day = get_next_trading_day(last_date_str)
+        
+        # Create last day graph (9:30 AM - 4:00 PM market hours)
         fig_last = go.Figure()
         fig_last.add_trace(go.Scatter(
             x=last_day["timestamp"].dt.strftime("%H:%M").tolist(),
@@ -162,12 +209,12 @@ def analyze():
             mode='lines+markers',
             name='Close Price',
             line=dict(color='blue', width=2),
-            marker=dict(size=6)
+            marker=dict(size=4)
         ))
         
         fig_last.update_layout(
-            title=f"{symbol} - Last Trading Day",
-            xaxis_title="Time",
+            title=f"{symbol} - Last Trading Day ({last_date_str})",
+            xaxis_title="Time (Market Hours: 9:30 AM - 4:00 PM ET)",
             yaxis_title="Price (USD)",
             hovermode='x unified',
             template='plotly_white',
@@ -176,8 +223,9 @@ def analyze():
         
         graph_last_day = fig_last.to_json()
         
-        # Get predictions for next hour
-        predictions, pred_error = predict_next_hour(symbol)
+        # Get predictions for next trading day's first hour (9:30 AM - 10:30 AM)
+        # Uses HISTORY data for predictions (not last_day)
+        predictions, pred_error = predict_next_hour(symbol, next_trading_day)
         
         graph_next_hour = None
         prediction_data = None
@@ -193,17 +241,18 @@ def analyze():
                 mode='lines+markers',
                 name='Predicted Price',
                 line=dict(color='green', width=2),
-                marker=dict(size=6)
+                marker=dict(size=3)
             ))
             
-            # Add current price as reference
+            # Add last closing price as reference
             last_price = last_day["close"].iloc[-1]
             fig_next.add_hline(y=last_price, line_dash="dash", line_color="red", 
-                             annotation_text="Current Price", annotation_position="right")
+                             annotation_text=f"Last Close: ${last_price:.2f}", annotation_position="right")
             
+            next_date_str = next_trading_day.strftime("%Y-%m-%d")
             fig_next.update_layout(
-                title=f"{symbol} - Next Hour Prediction (5-min intervals)",
-                xaxis_title="Time",
+                title=f"{symbol} - Next Day Prediction ({next_date_str}, 9:30-10:30 AM ET)",
+                xaxis_title="Time (1-minute intervals)",
                 yaxis_title="Predicted Price (USD)",
                 hovermode='x unified',
                 template='plotly_white',
@@ -215,7 +264,9 @@ def analyze():
                 "predictions": predictions,
                 "current_price": float(last_price),
                 "predicted_open": float(predictions[0]["price"]),
-                "change": float(predictions[0]["price"] - last_price)
+                "change": float(predictions[0]["price"] - last_price),
+                "last_date": last_date_str,
+                "prediction_date": next_date_str
             }
         
         # Get metrics
@@ -256,6 +307,8 @@ def analyze():
             "graph_next_hour": graph_next_hour,
             "predictions": prediction_data,
             "metrics": metrics_display,
+            "last_date": last_date_str,
+            "prediction_date": next_trading_day.strftime("%Y-%m-%d"),
             "error": pred_error
         })
     
