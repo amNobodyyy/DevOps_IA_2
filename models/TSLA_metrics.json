@@ -1,0 +1,46 @@
+{
+  "symbol": "TSLA",
+  "history": [
+    {
+      "operation": "train",
+      "samples": {
+        "train": 4751,
+        "test": 1188,
+        "total": 5949
+      },
+      "training": {
+        "train_loss_mse": 0.00019225744472350925,
+        "train_mae": 0.008916925737777496,
+        "train_r2": 0.9969069513880446,
+        "test_loss_mse": 6.99854499544017e-05,
+        "test_mae": 0.005659950604938226,
+        "test_rmse": 0.00836573068861302,
+        "test_r2": 0.9959979440014524
+      },
+      "model_config": {
+        "lstm_units_1": 64,
+        "lstm_units_2": 128,
+        "dropout_rate": 0.3,
+        "learning_rate": 0.001,
+        "bidirectional": false
+      },
+      "window_size": 10,
+      "epochs_run": 50,
+      "final_train_loss": 0.0010985685512423515,
+      "final_val_loss": 0.0001906355464598164,
+      "timestamp": "2025-12-06 09:48:40",
+      "date": "2025-12-06"
+    },
+    {
+      "operation": "prediction",
+      "last_actual_close": 454.9400024414063,
+      "predicted_next_price": 454.6526752468835,
+      "price_change": -0.28732719452278843,
+      "price_change_percent": -0.06315716203914043,
+      "data_points_used": 5949,
+      "window_size": 10,
+      "timestamp": "2025-12-06 09:49:34",
+      "date": "2025-12-06"
+    }
+  ]
+}
