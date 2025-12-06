@@ -1,0 +1,46 @@
+{
+  "symbol": "NVDA",
+  "history": [
+    {
+      "operation": "train",
+      "samples": {
+        "train": 4751,
+        "test": 1188,
+        "total": 5949
+      },
+      "training": {
+        "train_loss_mse": 0.00022924815129954368,
+        "train_mae": 0.009649297595053598,
+        "train_r2": 0.9955067689672237,
+        "test_loss_mse": 7.620506949024275e-05,
+        "test_mae": 0.005512378849246803,
+        "test_rmse": 0.008729551505675578,
+        "test_r2": 0.946204813080886
+      },
+      "model_config": {
+        "lstm_units_1": 64,
+        "lstm_units_2": 128,
+        "dropout_rate": 0.3,
+        "learning_rate": 0.001,
+        "bidirectional": false
+      },
+      "window_size": 10,
+      "epochs_run": 47,
+      "final_train_loss": 0.0006514910492114723,
+      "final_val_loss": 0.00034371059155091643,
+      "timestamp": "2025-12-06 09:49:33",
+      "date": "2025-12-06"
+    },
+    {
+      "operation": "prediction",
+      "last_actual_close": 182.3500061035156,
+      "predicted_next_price": 182.1522306863553,
+      "price_change": -0.197775417160301,
+      "price_change_percent": -0.10845923254207558,
+      "data_points_used": 5949,
+      "window_size": 10,
+      "timestamp": "2025-12-06 09:49:34",
+      "date": "2025-12-06"
+    }
+  ]
+}
