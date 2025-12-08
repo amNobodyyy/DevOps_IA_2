@@ -82,6 +82,47 @@
       "window_size": 10,
       "timestamp": "2025-12-07 06:37:38",
       "date": "2025-12-07"
+    },
+    {
+      "operation": "retrain",
+      "samples": {
+        "train": 4751,
+        "test": 1188,
+        "total": 5949
+      },
+      "training": {
+        "train_loss_mse": 5.500388942891732e-05,
+        "train_mae": 0.003611310367661266,
+        "train_r2": 0.9988468505556366,
+        "test_loss_mse": 1.2486870218708646e-05,
+        "test_mae": 0.0023697981604004687,
+        "test_rmse": 0.0035336765866033418,
+        "test_r2": 0.9863503834410812
+      },
+      "model_config": {
+        "lstm_units_1": 64,
+        "lstm_units_2": 128,
+        "dropout_rate": 0.3,
+        "learning_rate": 0.001,
+        "bidirectional": false
+      },
+      "window_size": 10,
+      "epochs_run": 29,
+      "final_train_loss": 0.00013166878488846123,
+      "final_val_loss": 0.0005059249815531075,
+      "timestamp": "2025-12-08 06:40:56",
+      "date": "2025-12-08"
+    },
+    {
+      "operation": "prediction",
+      "last_actual_close": 321.260009765625,
+      "predicted_next_price": 321.0801069122099,
+      "price_change": -0.1799028534151148,
+      "price_change_percent": -0.05599914335629971,
+      "data_points_used": 5949,
+      "window_size": 10,
+      "timestamp": "2025-12-08 06:43:23",
+      "date": "2025-12-08"
     }
   ]
 }
