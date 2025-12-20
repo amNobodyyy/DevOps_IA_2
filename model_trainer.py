@@ -172,6 +172,13 @@ def append_daily_to_history(symbol):
     print(f"  ✓ Appended {len(daily_df)} records from {daily_date} to history")
     print(f"  ✓ Updated history saved: {hist_file} (total: {len(combined_df)} records)")
     
+    # Delete the daily file after successful append
+    try:
+        os.remove(today_file)
+        print(f"  ✓ Deleted daily file: {today_file}")
+    except Exception as e:
+        print(f"  ⚠️ Warning: Could not delete daily file {today_file}: {e}")
+    
     return True
 
 
