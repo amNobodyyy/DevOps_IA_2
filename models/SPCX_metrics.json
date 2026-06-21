@@ -1,0 +1,46 @@
+{
+  "symbol": "SPCX",
+  "history": [
+    {
+      "operation": "train",
+      "samples": {
+        "train": 717,
+        "test": 180,
+        "total": 907
+      },
+      "training": {
+        "train_loss_mse": 0.0006349264876917005,
+        "train_mae": 0.016718005483685322,
+        "train_r2": 0.9877397940982213,
+        "test_loss_mse": 0.00019392759713809937,
+        "test_mae": 0.010370759350719275,
+        "test_rmse": 0.013925788923364428,
+        "test_r2": 0.9055635671068853
+      },
+      "model_config": {
+        "lstm_units_1": 64,
+        "lstm_units_2": 128,
+        "dropout_rate": 0.3,
+        "learning_rate": 0.001,
+        "bidirectional": false
+      },
+      "window_size": 10,
+      "epochs_run": 50,
+      "final_train_loss": 0.002299918094649911,
+      "final_val_loss": 0.0011947969906032085,
+      "timestamp": "2026-06-21 10:24:44",
+      "date": "2026-06-21"
+    },
+    {
+      "operation": "prediction",
+      "last_actual_close": 184.97000122070312,
+      "predicted_next_price": 186.12649042147405,
+      "price_change": 1.1564892007709204,
+      "price_change_percent": 0.6252306823477916,
+      "data_points_used": 907,
+      "window_size": 10,
+      "timestamp": "2026-06-21 10:24:46",
+      "date": "2026-06-21"
+    }
+  ]
+}
